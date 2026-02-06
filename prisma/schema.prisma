@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id            String     @id @default(cuid())
+  name          String
+  slug          String     @unique
+  clerkOrgId    String     @unique
+  subscriptionStatus String @default("trial") // trial, active, canceled, past_due
+  subscriptionTier String   @default("starter") // starter, professional, enterprise
+  trialEndsAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  
+  customers     Customer[]
+  followUpRecords FollowUpRecord[]
+  
+  @@map("organizations")
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  firstName   String
+  lastName    String
+  phone       String
+  email       String?
+  status      CustomerStatus @default(up_to_date)
+  
+  orgId       String
+  organization Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
+  
+  vehicles    Vehicle[]
+  followUpRecords FollowUpRecord[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([orgId])
+  @@index([status])
+  @@index([phone])
+  @@index([firstName, lastName])
+  @@map("customers")
+}
+
+model Vehicle {
+  id                    String   @id @default(cuid())
+  customerId            String
+  customer              Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  year                  Int
+  make                  String
+  model                 String
+  licensePlate          String?
+  mileageAtLastService  Int?
+  
+  serviceRecords        ServiceRecord[]
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  @@index([customerId])
+  @@map("vehicles")
+}
+
+model ServiceRecord {
+  id                String   @id @default(cuid())
+  vehicleId         String
+  vehicle           Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  
+  serviceDate       DateTime
+  mileageAtService  Int
+  serviceType       String   @default("oil_change")
+  notes             String?
+  
+  nextDueDate       DateTime
+  nextDueMileage    Int
+  
+  followUpRecords   FollowUpRecord[]
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([vehicleId])
+  @@index([nextDueDate])
+  @@map("service_records")
+}
+
+model FollowUpRecord {
+  id                String   @id @default(cuid())
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  serviceRecordId   String
+  serviceRecord     ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+  
+  orgId             String
+  organization      Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
+  
+  contactDate       DateTime @default(now())
+  method            ContactMethod
+  outcome           FollowUpOutcome
+  notes             String?
+  staffMember       String?
+  
+  createdAt         DateTime @default(now())
+  
+  @@index([customerId])
+  @@index([orgId])
+  @@index([outcome])
+  @@map("follow_up_records")
+}
+
+enum CustomerStatus {
+  overdue
+  due_now
+  due_soon
+  up_to_date
+}
+
+enum ContactMethod {
+  call
+  text
+  email
+}
+
+enum FollowUpOutcome {
+  scheduled
+  not_interested
+  no_response
+  serviced_elsewhere
+  left_message
+  wrong_number
+}
