@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
@@ -13,7 +14,11 @@ import {
   Plus, 
   Phone, 
   Car,
-  Filter
+  Filter,
+  MessageSquare,
+  Users,
+  ChevronRight,
+  Inbox
 } from 'lucide-react'
 import {
   Select,
@@ -43,7 +48,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
 
   const where: any = { orgId }
   
-  if (statusFilter) {
+  if (statusFilter && statusFilter !== 'all') {
     where.status = statusFilter
   }
   
@@ -106,7 +111,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
               <Button type="submit" variant="secondary">Search</Button>
             </form>
             <form className="flex gap-2">
-              <Select name="status" defaultValue={statusFilter}>
+              <Select name="status" defaultValue={statusFilter || 'all'}>
                 <SelectTrigger className="w-[180px]">
                   <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Filter by status" />
@@ -132,48 +137,45 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
         </CardHeader>
         <CardContent>
           {customers.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="w-12 h-12 text-zinc-300 mx-auto mb-4" />
-              <p className="text-zinc-600 mb-4">No customers found</p>
-              <Link href="/customers/new">
-                <Button>Add Your First Customer</Button>
-              </Link>
-            </div>
+            <EmptyState searchQuery={searchQuery} />
           ) : (
             <div className="divide-y">
               {customers.map((customer) => {
                 const latestService = customer.vehicles[0]?.serviceRecords[0]
                 
                 return (
-                  <Link 
-                    key={customer.id} 
-                    href={`/customers/${customer.id}`}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 transition-colors"
+                  <div 
+                    key={customer.id}
+                    className="group flex items-center justify-between p-4 hover:bg-zinc-50 transition-colors"
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-zinc-200 rounded-full flex items-center justify-center font-medium text-zinc-600">
+                    <Link 
+                      href={`/customers/${customer.id}`}
+                      className="flex items-center gap-4 flex-1 min-w-0"
+                    >
+                      <div className="w-10 h-10 bg-zinc-200 rounded-full flex items-center justify-center font-medium text-zinc-600 flex-shrink-0">
                         {customer.firstName[0]}{customer.lastName[0]}
                       </div>
-                      <div>
-                        <p className="font-medium">
-                          {customer.firstName} {customer.lastName}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">
+                          {highlightMatch(`${customer.firstName} ${customer.lastName}`, searchQuery)}
                         </p>
-                        <div className="flex items-center gap-3 text-sm text-zinc-600">
+                        <div className="flex items-center gap-3 text-sm text-zinc-600 flex-wrap">
                           <span className="flex items-center gap-1">
                             <Phone className="w-3 h-3" />
                             {format.phone(customer.phone)}
                           </span>
                           {customer.vehicles.length > 0 && (
-                            <span className="flex items-center gap-1">
+                            <span className="flex items-center gap-1 hidden sm:inline">
                               <Car className="w-3 h-3" />
                               {customer.vehicles.length} vehicle{customer.vehicles.length !== 1 ? 's' : ''}
                             </span>
                           )}
                         </div>
                       </div>
-                    </div>
+                    </Link>
+                    
                     <div className="flex items-center gap-4">
-                      <div className="text-right hidden sm:block">
+                      <div className="text-right hidden md:block">
                         {latestService ? (
                           <>
                             <p className="text-sm font-medium">
@@ -187,9 +189,32 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
                           <p className="text-sm text-zinc-500">No service records</p>
                         )}
                       </div>
-                      <StatusBadge status={customer.status} />
+                      
+                      {/* Hover Actions */}
+                      <div className="flex items-center gap-1">
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                          <a 
+                            href={`tel:${customer.phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                              <Phone className="w-4 h-4" />
+                            </Button>
+                          </a>
+                          <Link 
+                            href={`/customers/${customer.id}?action=message`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                              <MessageSquare className="w-4 h-4" />
+                            </Button>
+                          </Link>
+                        </div>
+                        <StatusBadge status={customer.status} />
+                        <ChevronRight className="w-4 h-4 text-zinc-400" />
+                      </div>
                     </div>
-                  </Link>
+                  </div>
                 )
               })}
             </div>
@@ -200,4 +225,56 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   )
 }
 
-import { Users } from 'lucide-react'
+function EmptyState({ searchQuery }: { searchQuery?: string }) {
+  if (searchQuery) {
+    return (
+      <div className="text-center py-12">
+        <Search className="w-12 h-12 text-zinc-300 mx-auto mb-4" />
+        <p className="text-zinc-600 mb-2">No customers found</p>
+        <p className="text-sm text-zinc-500 mb-4">
+          No results for &quot;{searchQuery}&quot;
+        </p>
+        <Link href="/customers">
+          <Button variant="outline">Clear Search</Button>
+        </Link>
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-center py-12">
+      <div className="w-20 h-20 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <Inbox className="w-10 h-10 text-zinc-400" />
+      </div>
+      <p className="text-zinc-600 mb-2">No customers yet</p>
+      <p className="text-sm text-zinc-500 mb-6 max-w-sm mx-auto">
+        Get started by adding your first customer. You can also import customers from a CSV file.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <Link href="/customers/new">
+          <Button className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Your First Customer
+          </Button>
+        </Link>
+        <Link href="/import">
+          <Button variant="outline" className="gap-2">
+            <Users className="w-4 h-4" />
+            Import from CSV
+          </Button>
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+function highlightMatch(text: string, query?: string) {
+  if (!query) return text
+  
+  const parts = text.split(new RegExp(`(${query})`, 'gi'))
+  return parts.map((part, i) => 
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark key={i} className="bg-yellow-200 rounded px-0.5">{part}</mark>
+    ) : part
+  )
+}

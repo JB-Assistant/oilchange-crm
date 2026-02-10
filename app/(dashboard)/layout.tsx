@@ -1,13 +1,19 @@
+'use client'
+
+export const dynamic = 'force-dynamic'
+
 import { UserButton, OrganizationSwitcher } from '@clerk/nextjs'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { Breadcrumbs } from '@/components/breadcrumbs'
 import { 
   LayoutDashboard, 
   Users, 
   Upload, 
   Settings, 
   Car,
-  Menu
+  Menu,
+  Bell,
 } from 'lucide-react'
 import {
   Sheet,
@@ -69,6 +75,9 @@ export default function DashboardLayout({
             <NavItem href="/customers" icon={<Users className="w-4 h-4" />}>
               Customers
             </NavItem>
+            <NavItem href="/dashboard/reminders" icon={<Bell className="w-4 h-4" />}>
+              SMS Reminders
+            </NavItem>
             <NavItem href="/import" icon={<Upload className="w-4 h-4" />}>
               Import
             </NavItem>
@@ -80,6 +89,7 @@ export default function DashboardLayout({
 
         {/* Main Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
+          <Breadcrumbs />
           {children}
         </main>
       </div>
@@ -115,6 +125,9 @@ function MobileNav() {
         </NavItem>
         <NavItem href="/customers" icon={<Users className="w-4 h-4" />}>
           Customers
+        </NavItem>
+        <NavItem href="/dashboard/reminders" icon={<Bell className="w-4 h-4" />}>
+          SMS Reminders
         </NavItem>
         <NavItem href="/import" icon={<Upload className="w-4 h-4" />}>
           Import
