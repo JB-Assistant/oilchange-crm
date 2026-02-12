@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { seedOrgDefaults } from "@/lib/seed-defaults"
 
 export async function GET() {
   try {
@@ -18,9 +19,17 @@ export async function GET() {
       }
     })
 
-    const serviceTypes = await prisma.serviceType.findMany({
+    let serviceTypes = await prisma.serviceType.findMany({
       where: { orgId },
     })
+
+    // Lazy-init defaults for existing orgs that predate seeding
+    if (serviceTypes.length === 0) {
+      await seedOrgDefaults(orgId)
+      serviceTypes = await prisma.serviceType.findMany({
+        where: { orgId },
+      })
+    }
 
     return NextResponse.json({
       settings: org ? {

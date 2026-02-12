@@ -2,6 +2,7 @@ import { Webhook } from 'svix'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { seedOrgDefaults } from '@/lib/seed-defaults'
 
 const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || ''
 
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
             trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 days
           }
         })
+        await seedOrgDefaults(data.id)
         break
 
       case 'organization.updated':

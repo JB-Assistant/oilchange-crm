@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Organization {
@@ -80,6 +81,7 @@ model Vehicle {
   year                  Int
   make                  String
   model                 String
+  vin                   String?
   licensePlate          String?
   mileageAtLastService  Int?
   

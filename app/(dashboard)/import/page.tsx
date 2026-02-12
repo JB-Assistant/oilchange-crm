@@ -5,7 +5,9 @@ export const dynamic = 'force-dynamic'
 import { useState, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Upload, Download, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import { Upload, Download, CheckCircle2, AlertCircle, FileText } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
 
 interface ImportResult {
@@ -13,6 +15,7 @@ interface ImportResult {
   errors: number
   duplicates: number
   message: string
+  format?: string
 }
 
 export default function ImportPage() {
@@ -20,53 +23,51 @@ export default function ImportPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [preview, setPreview] = useState<string[][]>([])
+  const [smsConsent, setSmsConsent] = useState(false)
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    const file = acceptedFiles[0]
-    if (file) {
-      setFile(file)
+    const dropped = acceptedFiles[0]
+    if (dropped) {
+      setFile(dropped)
       setResult(null)
-      
-      // Preview first few rows
+
       const reader = new FileReader()
       reader.onload = (e) => {
         const text = e.target?.result as string
         const rows = text.split('\n').slice(0, 6).map(row => row.split(','))
         setPreview(rows)
       }
-      reader.readAsText(file)
+      reader.readAsText(dropped)
     }
   }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'text/csv': ['.csv']
-    },
-    maxFiles: 1
+    accept: { 'text/csv': ['.csv'] },
+    maxFiles: 1,
   })
 
   async function handleImport() {
     if (!file) return
-    
+
     setLoading(true)
     const formData = new FormData()
     formData.append('file', file)
-    
+    formData.append('smsConsent', String(smsConsent))
+
     try {
       const response = await fetch('/api/import', {
         method: 'POST',
-        body: formData
+        body: formData,
       })
-      
       const data = await response.json()
       setResult(data)
-    } catch (error) {
+    } catch {
       setResult({
         success: 0,
         errors: 1,
         duplicates: 0,
-        message: 'Import failed. Please try again.'
+        message: 'Import failed. Please try again.',
       })
     } finally {
       setLoading(false)
@@ -77,12 +78,24 @@ export default function ImportPage() {
     const headers = 'firstName,lastName,phone,email,vehicleYear,vehicleMake,vehicleModel,licensePlate,lastServiceDate,lastServiceMileage'
     const example = 'John,Doe,(555) 123-4567,john@example.com,2020,Toyota,Camry,ABC123,2025-01-15,45000'
     const csv = `${headers}\n${example}`
-    
-    const blob = new Blob([csv], { type: 'text/csv' })
+
+    downloadCSV(csv, 'oilchange-crm-template.csv')
+  }
+
+  function downloadShopTemplate() {
+    const headers = 'Full Name,Phone,Year/Make/Model,VIN Code,Current Milleage,Repair Description'
+    const example = 'John Doe,5551234567,2020 Toyota Camry,1HGBH41JXMN109186,45000,Oil Change 5W-30'
+    const csv = `${headers}\n${example}`
+
+    downloadCSV(csv, 'shop-format-template.csv')
+  }
+
+  function downloadCSV(content: string, filename: string) {
+    const blob = new Blob([content], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'oilchange-crm-template.csv'
+    a.download = filename
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -97,15 +110,21 @@ export default function ImportPage() {
       {/* Template Download */}
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
               <h3 className="font-semibold mb-1">Need a template?</h3>
-              <p className="text-sm text-zinc-600">Download our CSV template with the correct format</p>
+              <p className="text-sm text-zinc-600">Download a CSV template to get started</p>
             </div>
-            <Button variant="outline" onClick={downloadTemplate} className="gap-2">
-              <Download className="w-4 h-4" />
-              Download Template
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={downloadTemplate} className="gap-2">
+                <Download className="w-4 h-4" />
+                Standard Template
+              </Button>
+              <Button variant="outline" onClick={downloadShopTemplate} className="gap-2">
+                <FileText className="w-4 h-4" />
+                Shop Format Template
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -131,7 +150,7 @@ export default function ImportPage() {
                 <p className="text-zinc-600 mb-2">
                   Drag and drop your CSV file here, or click to select
                 </p>
-                <p className="text-sm text-zinc-400">Maximum file size: 10MB</p>
+                <p className="text-sm text-zinc-400">Supports both standard and shop formats</p>
               </>
             )}
           </div>
@@ -153,7 +172,7 @@ export default function ImportPage() {
                   <tbody>
                     {preview.map((row, i) => (
                       <tr key={i} className={i === 0 ? 'bg-zinc-100 font-medium' : 'border-t'}>
-                        {row.slice(0, 5).map((cell, j) => (
+                        {row.slice(0, 6).map((cell, j) => (
                           <td key={j} className="p-2 truncate max-w-[150px]">{cell}</td>
                         ))}
                       </tr>
@@ -164,8 +183,23 @@ export default function ImportPage() {
             </div>
           )}
 
-          <Button 
-            onClick={handleImport} 
+          {/* SMS Consent Toggle */}
+          <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-lg">
+            <div>
+              <Label htmlFor="sms-consent" className="font-medium">SMS Consent</Label>
+              <p className="text-sm text-zinc-500 mt-0.5">
+                Opt in imported customers for SMS reminders
+              </p>
+            </div>
+            <Switch
+              id="sms-consent"
+              checked={smsConsent}
+              onCheckedChange={setSmsConsent}
+            />
+          </div>
+
+          <Button
+            onClick={handleImport}
             disabled={!file || loading}
             className="w-full"
           >
@@ -182,6 +216,11 @@ export default function ImportPage() {
                 )}
                 <span className="font-medium">{result.message}</span>
               </div>
+              {result.format && (
+                <p className="text-sm text-zinc-600 mb-3">
+                  Detected format: <span className="font-medium">{result.format}</span>
+                </p>
+              )}
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <span className="text-2xl font-bold text-green-600">{result.success}</span>
@@ -207,14 +246,31 @@ export default function ImportPage() {
           <CardTitle>Import Guidelines</CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="space-y-2 text-sm text-zinc-600">
-            <li>• First row must contain column headers</li>
-            <li>• Required columns: firstName, lastName, phone</li>
-            <li>• Optional columns: email, vehicleYear, vehicleMake, vehicleModel, licensePlate, lastServiceDate, lastServiceMileage</li>
-            <li>• Phone numbers will be formatted automatically</li>
-            <li>• Duplicate detection is based on phone number</li>
-            <li>• Dates should be in YYYY-MM-DD format</li>
-          </ul>
+          <div className="space-y-4">
+            <div>
+              <h4 className="font-medium text-sm mb-2">Standard Format</h4>
+              <ul className="space-y-1 text-sm text-zinc-600">
+                <li>- Required: firstName, lastName, phone</li>
+                <li>- Optional: email, vehicleYear, vehicleMake, vehicleModel, licensePlate, lastServiceDate, lastServiceMileage</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-medium text-sm mb-2">Shop Format (auto-detected)</h4>
+              <ul className="space-y-1 text-sm text-zinc-600">
+                <li>- Required: Phone</li>
+                <li>- Optional: Full Name, Year/Make/Model, VIN Code, Current Milleage, Repair Description</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-medium text-sm mb-2">General</h4>
+              <ul className="space-y-1 text-sm text-zinc-600">
+                <li>- Format is auto-detected from column headers</li>
+                <li>- Phone numbers are cleaned automatically (country code stripped)</li>
+                <li>- Duplicate detection is based on phone number</li>
+                <li>- Dates should be in YYYY-MM-DD format</li>
+              </ul>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
