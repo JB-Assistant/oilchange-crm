@@ -1,5 +1,6 @@
 import twilio from "twilio";
 import { prisma } from "./prisma";
+import { decrypt, isEncrypted } from "./crypto";
 
 interface SendSMSOptions {
   to: string;
@@ -28,13 +29,16 @@ export async function sendSMS({
     throw new Error("Twilio not configured for this organization");
   }
 
-  const client = twilio(config.accountSid, config.authToken);
+  const sid = isEncrypted(config.accountSid) ? decrypt(config.accountSid) : config.accountSid;
+  const token = isEncrypted(config.authToken) ? decrypt(config.authToken) : config.authToken;
+  const client = twilio(sid, token);
 
+  const webhookUrl = process.env.TWILIO_WEBHOOK_URL;
   const message = await client.messages.create({
     body,
     from: config.phoneNumber,
     to,
-    statusCallback: `${process.env.TWILIO_WEBHOOK_URL}/api/webhooks/twilio`,
+    ...(webhookUrl && { statusCallback: `${webhookUrl}/api/webhooks/twilio` }),
   });
 
   // If this is a tracked reminder message, update it
@@ -61,5 +65,7 @@ export async function getTwilioClient(orgId: string) {
     throw new Error("Twilio not configured for this organization");
   }
 
-  return twilio(config.accountSid, config.authToken);
+  const sid = isEncrypted(config.accountSid) ? decrypt(config.accountSid) : config.accountSid;
+  const token = isEncrypted(config.authToken) ? decrypt(config.authToken) : config.authToken;
+  return twilio(sid, token);
 }

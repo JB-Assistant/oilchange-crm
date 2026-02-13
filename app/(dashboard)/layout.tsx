@@ -6,15 +6,17 @@ import { UserButton, OrganizationSwitcher } from '@clerk/nextjs'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Breadcrumbs } from '@/components/breadcrumbs'
-import { 
+import { OttoLogo } from '@/components/ui/otto-logo'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
+import {
   LayoutDashboard,
   Users,
   Wrench,
   Upload,
   Settings,
-  Car,
   Menu,
   Bell,
+  Palette,
 } from 'lucide-react'
 import {
   Sheet,
@@ -28,9 +30,9 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-muted">
       {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b bg-white">
+      <header className="sticky top-0 z-50 w-full border-b bg-card">
         <div className="flex h-16 items-center px-4 sm:px-6">
           <div className="flex items-center gap-4 flex-1">
             <Sheet>
@@ -43,21 +45,20 @@ export default function DashboardLayout({
                 <MobileNav />
               </SheetContent>
             </Sheet>
-            
+
             <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-zinc-900 rounded-lg flex items-center justify-center">
-                <Car className="w-5 h-5 text-white" />
-              </div>
-              <span className="font-bold text-xl hidden sm:inline">OilChange Pro</span>
+              <OttoLogo variant="monogram" size="md" />
+              <span className="font-heading font-bold text-xl hidden sm:inline">OttoManagerPro</span>
             </Link>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <OrganizationSwitcher 
+
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <OrganizationSwitcher
               hidePersonal
               appearance={{
                 elements: {
-                  organizationSwitcherTrigger: "px-3 py-2 border rounded-md hover:bg-zinc-50"
+                  organizationSwitcherTrigger: "px-3 py-2 border rounded-md hover:bg-accent"
                 }
               }}
             />
@@ -68,7 +69,7 @@ export default function DashboardLayout({
 
       <div className="flex">
         {/* Sidebar - Desktop */}
-        <aside className="hidden lg:block w-64 border-r bg-white min-h-[calc(100vh-4rem)] sticky top-16">
+        <aside className="hidden lg:block w-64 border-r bg-card min-h-[calc(100vh-4rem)] sticky top-16">
           <nav className="p-4 space-y-2">
             <NavItem href="/dashboard" icon={<LayoutDashboard className="w-4 h-4" />}>
               Dashboard
@@ -88,6 +89,11 @@ export default function DashboardLayout({
             <NavItem href="/settings" icon={<Settings className="w-4 h-4" />}>
               Settings
             </NavItem>
+            {process.env.NODE_ENV === 'development' && (
+              <NavItem href="/design-system" icon={<Palette className="w-4 h-4" />}>
+                Design System
+              </NavItem>
+            )}
           </nav>
         </aside>
 
@@ -104,7 +110,7 @@ export default function DashboardLayout({
 function NavItem({ href, icon, children }: { href: string, icon: React.ReactNode, children: React.ReactNode }) {
   return (
     <Link href={href}>
-      <Button variant="ghost" className="w-full justify-start gap-3">
+      <Button variant="ghost" className="w-full justify-start gap-3 hover:bg-accent">
         {icon}
         {children}
       </Button>
@@ -117,10 +123,8 @@ function MobileNav() {
     <div className="flex flex-col h-full">
       <div className="p-4 border-b">
         <Link href="/dashboard" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-zinc-900 rounded-lg flex items-center justify-center">
-            <Car className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-bold text-xl">OilChange Pro</span>
+          <OttoLogo variant="monogram" size="md" />
+          <span className="font-heading font-bold text-xl">OttoManagerPro</span>
         </Link>
       </div>
       <nav className="p-4 space-y-2 flex-1">
@@ -142,6 +146,11 @@ function MobileNav() {
         <NavItem href="/settings" icon={<Settings className="w-4 h-4" />}>
           Settings
         </NavItem>
+        {process.env.NODE_ENV === 'development' && (
+          <NavItem href="/design-system" icon={<Palette className="w-4 h-4" />}>
+            Design System
+          </NavItem>
+        )}
       </nav>
     </div>
   )

@@ -1,17 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { processInboundMessage } from "@/lib/sms-queue";
+import { validateRequest } from "twilio";
+import { decrypt, isEncrypted } from "@/lib/crypto";
+
+async function verifyTwilioSignature(
+  req: NextRequest,
+  params: Record<string, string>
+): Promise<boolean> {
+  const signature = req.headers.get("x-twilio-signature");
+  if (!signature) return false;
+
+  const webhookUrl = process.env.TWILIO_WEBHOOK_URL;
+  if (!webhookUrl) return false;
+
+  const url = `${webhookUrl}/api/webhooks/twilio`;
+
+  // Look up auth token by the "To" phone (inbound) or find any active config
+  const phoneNumber = params.To || params.From;
+  const config = phoneNumber
+    ? await prisma.twilioConfig.findFirst({
+        where: { phoneNumber, isActive: true },
+      })
+    : null;
+
+  if (!config) return false;
+
+  const authToken = isEncrypted(config.authToken)
+    ? decrypt(config.authToken)
+    : config.authToken;
+
+  return validateRequest(authToken, signature, url, params);
+}
 
 // POST /api/webhooks/twilio - Handle Twilio webhooks
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    
-    const from = formData.get("From") as string;
-    const to = formData.get("To") as string;
-    const body = formData.get("Body") as string;
-    const messageSid = formData.get("MessageSid") as string;
-    const messageStatus = formData.get("MessageStatus") as string;
+    // Read raw body for signature verification, then parse as form data
+    const rawBody = await req.text();
+    const params: Record<string, string> = {};
+    const urlParams = new URLSearchParams(rawBody);
+    for (const [key, value] of urlParams.entries()) {
+      params[key] = value;
+    }
+
+    // Verify Twilio signature
+    const clonedReq = new NextRequest(req.url, {
+      headers: req.headers,
+    });
+    const isValid = await verifyTwilioSignature(clonedReq, params);
+    if (!isValid) {
+      console.warn("Invalid Twilio webhook signature");
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const from = params.From;
+    const to = params.To;
+    const body = params.Body;
+    const messageSid = params.MessageSid;
+    const messageStatus = params.MessageStatus;
 
     // Handle status callbacks
     if (messageStatus && messageSid) {
@@ -38,17 +85,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error handling Twilio webhook:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
 
 function mapTwilioStatus(status: string): string {
   const statusMap: Record<string, string> = {
-    "queued": "queued",
-    "sent": "sent",
-    "delivered": "delivered",
-    "failed": "failed",
-    "undelivered": "undelivered",
+    queued: "queued",
+    sent: "sent",
+    delivered: "delivered",
+    failed: "failed",
+    undelivered: "undelivered",
   };
   return statusMap[status] || "sent";
 }

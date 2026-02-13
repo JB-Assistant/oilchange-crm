@@ -40,8 +40,8 @@ export default async function SettingsPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-zinc-600 mt-1">Manage your organization and subscription</p>
+        <h1 className="font-heading text-3xl font-bold">Settings</h1>
+        <p className="text-muted-foreground mt-1">Manage your organization and subscription</p>
       </div>
 
       {/* Organization Info */}

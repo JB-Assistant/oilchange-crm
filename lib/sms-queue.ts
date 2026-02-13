@@ -30,11 +30,13 @@ export async function sendQueuedMessages(): Promise<SendResult> {
 
     for (const message of messages) {
       try {
-        // Check quiet hours
+        // Check quiet hours (handle wrap-around like 21-9 vs non-wrap like 9-17)
         const hour = new Date().getHours();
-        const isQuietHours =
-          hour >= message.organization.reminderQuietStart ||
-          hour < message.organization.reminderQuietEnd;
+        const qStart = message.organization.reminderQuietStart;
+        const qEnd = message.organization.reminderQuietEnd;
+        const isQuietHours = qStart > qEnd
+          ? hour >= qStart || hour < qEnd
+          : hour >= qStart && hour < qEnd;
 
         if (isQuietHours) {
           skipped++;
@@ -104,6 +106,22 @@ export async function processInboundMessage({
     const org = customer.organization;
     const messageBody = body.toUpperCase().trim();
 
+    // Store all inbound messages before keyword branching
+    await prisma.reminderMessage.create({
+      data: {
+        orgId: org.clerkOrgId,
+        customerId: customer.id,
+        direction: "inbound",
+        body,
+        fromPhone: from,
+        toPhone: to,
+        twilioSid: messageSid,
+        status: "delivered",
+        statusUpdatedAt: new Date(),
+        scheduledAt: new Date(),
+      },
+    });
+
     // Handle STOP
     if (messageBody === "STOP" || messageBody.startsWith("STOP")) {
       await prisma.customer.update({
@@ -165,17 +183,28 @@ export async function processInboundMessage({
 
     // Handle BOOK
     if (messageBody === "BOOK") {
-      // Create a follow-up record indicating customer wants to schedule
-      await prisma.followUpRecord.create({
-        data: {
+      // Find the most recent outbound reminder to link the follow-up
+      const recentReminder = await prisma.reminderMessage.findFirst({
+        where: {
           customerId: customer.id,
-          serviceRecordId: "", // Would need to determine which service
-          orgId: org.clerkOrgId,
-          method: "text",
-          outcome: "scheduled",
-          notes: "Customer replied BOOK to schedule via SMS",
+          direction: "outbound",
+          serviceRecordId: { not: null },
         },
+        orderBy: { createdAt: "desc" },
       });
+
+      if (recentReminder?.serviceRecordId) {
+        await prisma.followUpRecord.create({
+          data: {
+            customerId: customer.id,
+            serviceRecordId: recentReminder.serviceRecordId,
+            orgId: org.clerkOrgId,
+            method: "text",
+            outcome: "scheduled",
+            notes: "Customer replied BOOK to schedule via SMS",
+          },
+        });
+      }
 
       await sendSMS({
         to: from,
@@ -186,33 +215,28 @@ export async function processInboundMessage({
       return;
     }
 
-    // Log other replies as notes
-    await prisma.followUpRecord.create({
-      data: {
+    // Log other replies as follow-up notes
+    const recentMessage = await prisma.reminderMessage.findFirst({
+      where: {
         customerId: customer.id,
-        serviceRecordId: "",
-        orgId: org.clerkOrgId,
-        method: "text",
-        outcome: "no_response",
-        notes: `Customer reply: ${body}`,
+        direction: "outbound",
+        serviceRecordId: { not: null },
       },
+      orderBy: { createdAt: "desc" },
     });
 
-    // Store the inbound message
-    await prisma.reminderMessage.create({
-      data: {
-        orgId: org.clerkOrgId,
-        customerId: customer.id,
-        direction: "inbound",
-        body,
-        fromPhone: from,
-        toPhone: to,
-        twilioSid: messageSid,
-        status: "delivered",
-        statusUpdatedAt: new Date(),
-        scheduledAt: new Date(),
-      },
-    });
+    if (recentMessage?.serviceRecordId) {
+      await prisma.followUpRecord.create({
+        data: {
+          customerId: customer.id,
+          serviceRecordId: recentMessage.serviceRecordId,
+          orgId: org.clerkOrgId,
+          method: "text",
+          outcome: "no_response",
+          notes: `Customer reply: ${body}`,
+        },
+      });
+    }
   } catch (error) {
     console.error("Error processing inbound message:", error);
   }

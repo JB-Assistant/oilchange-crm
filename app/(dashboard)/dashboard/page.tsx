@@ -70,8 +70,8 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-zinc-600 mt-1">Overview of your customer service status</p>
+        <h1 className="font-heading text-3xl font-bold">Dashboard</h1>
+        <p className="text-muted-foreground mt-1">Overview of your customer service status</p>
       </div>
 
       {/* Stats Grid */}

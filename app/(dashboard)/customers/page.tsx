@@ -83,8 +83,8 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Customers</h1>
-          <p className="text-zinc-600 mt-1">Manage your customer base and service records</p>
+          <h1 className="font-heading text-3xl font-bold">Customers</h1>
+          <p className="text-muted-foreground mt-1">Manage your customer base and service records</p>
         </div>
         <Link href="/customers/new">
           <Button className="gap-2">
@@ -198,7 +198,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
                               <Phone className="w-4 h-4" />
                             </Button>
                           </a>
-                          <Link href={`/customers/${customer.id}?action=message`}>
+                          <Link href={`/customers/${customer.id}/sms`}>
                             <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
                               <MessageSquare className="w-4 h-4" />
                             </Button>

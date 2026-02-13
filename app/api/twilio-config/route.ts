@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { encrypt, decrypt, isEncrypted } from "@/lib/crypto";
 
 // GET /api/twilio-config - Get Twilio config for org
 export async function GET(req: NextRequest) {
@@ -18,10 +19,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(null);
     }
 
-    // Don't return auth token
+    // Decrypt accountSid for display, don't return auth token
+    const displaySid = isEncrypted(config.accountSid)
+      ? decrypt(config.accountSid)
+      : config.accountSid;
+
     return NextResponse.json({
       id: config.id,
-      accountSid: config.accountSid,
+      accountSid: displaySid,
       phoneNumber: config.phoneNumber,
       isActive: config.isActive,
     });
@@ -48,19 +53,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // TODO: Encrypt credentials before storing
+    const encryptedSid = encrypt(accountSid);
+    const encryptedToken = encrypt(authToken);
+
     const config = await prisma.twilioConfig.upsert({
       where: { orgId },
       update: {
-        accountSid,
-        authToken,
+        accountSid: encryptedSid,
+        authToken: encryptedToken,
         phoneNumber,
         isActive: true,
       },
       create: {
         orgId,
-        accountSid,
-        authToken,
+        accountSid: encryptedSid,
+        authToken: encryptedToken,
         phoneNumber,
         isActive: true,
       },

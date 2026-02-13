@@ -95,6 +95,12 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
               Call
             </Button>
           </Link>
+          <Link href={`/customers/${customer.id}/sms`}>
+            <Button variant="outline" className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              SMS
+            </Button>
+          </Link>
         </div>
       </div>
 
