@@ -39,14 +39,24 @@ export async function processImportRow(
   }
 
   const mileage = row.lastServiceMileage ? parseInt(row.lastServiceMileage) : null
-  const serviceDate = row.lastServiceDate ? new Date(row.lastServiceDate) : null
+  const rawDate = row.lastServiceDate ? new Date(row.lastServiceDate) : null
+  const validDate = rawDate && !isNaN(rawDate.getTime()) ? rawDate : null
+  // Default to today when we have mileage or repair data but no explicit date
+  const serviceDate = validDate ?? ((mileage || row.repairDescription) ? new Date() : null)
   const serviceType = row.repairDescription ? inferServiceType(row.repairDescription) : 'oil_change'
   const hasVehicle = !!(row.vehicleYear && row.vehicleMake && row.vehicleModel)
-  const hasService = !!(serviceDate && mileage && !isNaN(serviceDate.getTime()))
+  const hasService = !!(serviceDate && mileage)
 
   const existing = await prisma.customer.findFirst({
     where: { orgId, phone: row.phone },
-    include: { vehicles: { select: { year: true, make: true, model: true } } },
+    include: {
+      vehicles: {
+        select: {
+          id: true, year: true, make: true, model: true,
+          serviceRecords: { select: { mileageAtService: true } },
+        },
+      },
+    },
   })
 
   if (existing) {
@@ -55,14 +65,47 @@ export async function processImportRow(
     }
 
     const importYear = parseInt(row.vehicleYear)
-    const alreadyHasVehicle = existing.vehicles.some(
+    const matchedVehicle = existing.vehicles.find(
       v =>
         v.year === importYear &&
         v.make.toLowerCase() === row.vehicleMake.toLowerCase() &&
         v.model.toLowerCase() === row.vehicleModel.toLowerCase()
     )
 
-    if (alreadyHasVehicle) {
+    if (matchedVehicle) {
+      // Vehicle exists — try to add service record if we have data and it's not already there
+      if (hasService) {
+        const alreadyHasRecord = matchedVehicle.serviceRecords.some(
+          sr => sr.mileageAtService === mileage
+        )
+        if (!alreadyHasRecord) {
+          try {
+            await prisma.serviceRecord.create({
+              data: {
+                vehicleId: matchedVehicle.id,
+                serviceDate: serviceDate!,
+                mileageAtService: mileage!,
+                serviceType,
+                notes: row.repairDescription || null,
+                nextDueDate: calculateNextDueDate(serviceDate!),
+                nextDueMileage: calculateNextDueMileage(mileage!),
+              },
+            })
+            await prisma.vehicle.update({
+              where: { id: matchedVehicle.id },
+              data: { mileageAtLastService: mileage },
+            })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error'
+            return { status: 'error', message: `Failed to add service record: ${msg}`, created: noCreation }
+          }
+          return {
+            status: 'updated',
+            message: 'Added service record to existing vehicle',
+            created: { customer: false, vehicle: false, serviceRecord: true },
+          }
+        }
+      }
       return { status: 'duplicate', message: 'Vehicle already exists', created: noCreation }
     }
 
