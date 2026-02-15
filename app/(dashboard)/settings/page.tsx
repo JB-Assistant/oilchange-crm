@@ -12,9 +12,9 @@ import { PlanFeature } from '@/components/settings/plan-feature'
 import { BillingActions } from '@/components/settings/billing-actions'
 
 const TIER_LIMITS = {
-  starter: { customers: 100, team: 1 },
-  professional: { customers: 1000, team: 5 },
-  enterprise: { customers: Infinity, team: Infinity }
+  starter: { customers: 200, team: 1 },
+  pro: { customers: Infinity, team: 3 },
+  business: { customers: Infinity, team: Infinity }
 } as const
 
 export default async function SettingsPage() {
@@ -76,9 +76,9 @@ export default async function SettingsPage() {
           </div>
           <div className="grid gap-3">
             <h4 className="font-medium text-sm">Available Plans</h4>
-            <PlanFeature name="Starter" price="$0" features={['Up to 100 customers', 'Basic dashboard', 'Email support']} current={currentTier === 'starter'} />
-            <PlanFeature name="Professional" price="$49/mo" features={['Up to 1,000 customers', 'Advanced dashboard', 'Team collaboration', 'Priority support']} current={currentTier === 'professional'} />
-            <PlanFeature name="Enterprise" price="$149/mo" features={['Unlimited customers', 'API access', 'Custom integrations', 'Dedicated support']} current={currentTier === 'enterprise'} />
+            <PlanFeature name="Otto Starter" price="$49/mo" features={['Up to 200 customers', '300 SMS/month', 'Basic dashboard', 'Email support']} current={currentTier === 'starter'} />
+            <PlanFeature name="Otto Pro" price="$99/mo" features={['Unlimited customers', '1,000 SMS/month', 'AI personalized messages', 'Advanced analytics', 'Priority support']} current={currentTier === 'pro'} />
+            <PlanFeature name="Otto Business" price="$199/mo" features={['Unlimited customers', '3,000 SMS/month', 'White-label & API access', 'Dedicated support + phone']} current={currentTier === 'business'} />
           </div>
           <BillingActions currentTier={currentTier} hasStripeCustomer={!!org?.stripeCustomerId} />
         </CardContent>

@@ -13,7 +13,7 @@ async function main() {
       name: 'Test Auto Shop',
       slug: 'test-auto-shop',
       subscriptionStatus: 'trial',
-      subscriptionTier: 'professional'
+      subscriptionTier: 'pro'
     }
   })
 

@@ -24,24 +24,32 @@ export const stripe = createStripeClient()
 
 export const PLANS = {
   starter: {
-    name: 'Starter',
-    price: 0,
-    priceId: null,
-    limits: { customers: 100, smsPerMonth: 200 },
-  },
-  professional: {
-    name: 'Professional',
+    name: 'Otto Starter',
     price: 4900, // cents
-    priceId: process.env.STRIPE_PROFESSIONAL_PRICE_ID || null,
-    limits: { customers: 1000, smsPerMonth: 2000 },
+    priceId: process.env.STRIPE_STARTER_PRICE_ID || null,
+    limits: { customers: 200, smsPerMonth: 300, locations: 1 },
   },
-  enterprise: {
-    name: 'Enterprise',
-    price: 14900, // cents
-    priceId: process.env.STRIPE_ENTERPRISE_PRICE_ID || null,
-    limits: { customers: Infinity, smsPerMonth: Infinity },
+  pro: {
+    name: 'Otto Pro',
+    price: 9900, // cents
+    priceId: process.env.STRIPE_PRO_PRICE_ID || null,
+    limits: { customers: Infinity, smsPerMonth: 1000, locations: 3 },
+  },
+  business: {
+    name: 'Otto Business',
+    price: 19900, // cents
+    priceId: process.env.STRIPE_BUSINESS_PRICE_ID || null,
+    limits: { customers: Infinity, smsPerMonth: 3000, locations: Infinity },
   },
 } as const
+
+export const SMS_OVERAGE_RATE = 0.04
+
+export const TRIAL_CONFIG = {
+  durationDays: 14,
+  smsLimit: 50,
+  tier: 'pro' as const,
+}
 
 export type PlanTier = keyof typeof PLANS
 

@@ -50,36 +50,42 @@ export function LandingPricing() {
           <p className="text-lg text-muted-foreground">Choose the plan that fits your shop. Otto works 24/7 on all plans.</p>
         </div>
 
+        <div className="mx-auto max-w-5xl mb-10 rounded-lg border border-otto-500/30 bg-otto-500/5 p-4 text-center">
+          <p className="font-medium text-otto-600 dark:text-otto-400">
+            14-day free trial — full Pro features, 50 SMS included, no credit card required
+          </p>
+        </div>
+
         <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
           <PricingCard
             name="Otto Starter"
             audience="For single-location shops"
-            price="$2,000"
-            priceSuffix="one-time setup"
-            features={["Otto tracks up to 500 customers", "Automated SMS reminders", "Basic reporting dashboard", "30-day support", "2-week setup"]}
-            cta="Get Started"
+            price="$49"
+            priceSuffix="/month"
+            features={["Up to 200 customers", "300 SMS/month included", "Template-based messages", "Basic dashboard", "Email support"]}
+            cta="Start Free Trial"
           />
           <PricingCard
-            name="Otto Professional"
-            audience="For growing multi-location shops"
-            price="$5,000"
-            priceSuffix="one-time setup"
-            features={["Otto tracks unlimited customers", "Multi-location support", "Advanced analytics dashboard", "Custom reminder rules", "60-day priority support", "4-week setup"]}
-            cta="Hire Otto Pro"
+            name="Otto Pro"
+            audience="For growing shops"
+            price="$99"
+            priceSuffix="/month"
+            features={["Unlimited customers", "1,000 SMS/month included", "AI personalized messages", "Up to 3 locations", "Advanced analytics", "Custom reminder rules", "Priority support"]}
+            cta="Start Free Trial"
             highlighted
           />
           <PricingCard
-            name="Otto Enterprise"
+            name="Otto Business"
             audience="For chains & franchises"
-            price="$10,000+"
-            priceSuffix="custom pricing"
-            features={["Custom Otto deployment", "Full API integrations", "White-label option", "Dedicated support", "Custom features", "8+ week setup"]}
-            cta="Contact Us"
+            price="$199"
+            priceSuffix="/month"
+            features={["Unlimited customers", "3,000 SMS/month included", "Premium AI models", "Unlimited locations", "White-label option", "API access", "Dedicated support + phone", "Dedicated onboarding"]}
+            cta="Start Free Trial"
           />
         </div>
 
         <p className="text-center text-muted-foreground mt-8">
-          All plans include 30-day money-back guarantee. Otto pays for himself in retained customers.
+          Need more SMS? Just $0.04/message beyond your plan limit. All plans include a 30-day money-back guarantee.
         </p>
       </div>
     </section>

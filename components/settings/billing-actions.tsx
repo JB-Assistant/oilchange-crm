@@ -18,7 +18,7 @@ export function BillingActions({ currentTier, hasStripeCustomer }: BillingAction
   const handleUpgrade = async () => {
     setUpgrading(true)
     try {
-      const targetTier = currentTier === 'starter' ? 'professional' : 'enterprise'
+      const targetTier = currentTier === 'starter' ? 'pro' : 'business'
       const res = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,7 +48,7 @@ export function BillingActions({ currentTier, hasStripeCustomer }: BillingAction
 
   return (
     <div className="flex gap-3">
-      {currentTier !== 'enterprise' && (
+      {currentTier !== 'business' && (
         <Button className="flex-1" onClick={handleUpgrade} disabled={upgrading}>
           {upgrading ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Processing...</> : 'Upgrade Plan'}
         </Button>
