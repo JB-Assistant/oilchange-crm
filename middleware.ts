@@ -5,6 +5,7 @@ const isProtectedRoute = createRouteMatcher([
   '/customers(.*)',
   '/import(.*)',
   '/settings(.*)',
+  '/ai(.*)',
   '/api/(.*)'
 ])
 

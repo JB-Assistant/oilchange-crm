@@ -17,6 +17,7 @@ import {
   Bell,
   Calendar,
   Palette,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -30,6 +31,7 @@ interface NavItemConfig {
 
 export const NAV_ITEMS: NavItemConfig[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/ai', label: 'AI Manager', icon: Sparkles },
   { href: '/customers', label: 'Customers', icon: Users },
   { href: '/services', label: 'Services', icon: Wrench },
   { href: '/appointments', label: 'Appointments', icon: Calendar },

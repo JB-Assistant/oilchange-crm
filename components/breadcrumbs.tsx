@@ -6,6 +6,7 @@ import { ChevronRight, Home } from "lucide-react"
 
 const BREADCRUMB_MAP: Record<string, string> = {
   "dashboard": "Dashboard",
+  "ai": "AI Manager",
   "customers": "Customers",
   "new": "New",
   "settings": "Settings",

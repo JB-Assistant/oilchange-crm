@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { prisma } from '@/lib/prisma'
-import { Building2, CreditCard, Users, Bell, Shield, CheckCircle2 } from 'lucide-react'
+import Link from 'next/link'
+import { Building2, CreditCard, Users, Bell, Shield, CheckCircle2, Sparkles, ChevronRight } from 'lucide-react'
 import { PlanFeature } from '@/components/settings/plan-feature'
 import { BillingActions } from '@/components/settings/billing-actions'
 
@@ -20,7 +21,10 @@ export default async function SettingsPage() {
   const { orgId } = await auth()
   if (!orgId) redirect('/')
 
-  const org = await prisma.organization.findUnique({ where: { clerkOrgId: orgId } })
+  const [org, aiConfig] = await Promise.all([
+    prisma.organization.findUnique({ where: { clerkOrgId: orgId } }),
+    prisma.aiConfig.findUnique({ where: { orgId } }),
+  ])
   const currentTier = (org?.subscriptionTier || 'starter') as keyof typeof TIER_LIMITS
   const limits = TIER_LIMITS[currentTier]
   const customerCount = await prisma.customer.count({ where: { orgId } })
@@ -90,6 +94,30 @@ export default async function SettingsPage() {
           <Button variant="outline">Open Clerk Dashboard</Button>
         </CardContent>
       </Card>
+
+      <Link href="/ai" className="block group">
+        <Card className="border-violet-200 dark:border-violet-500/30 transition-shadow hover:shadow-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-violet-500" />
+              AI Shop Manager
+              <ChevronRight className="ml-auto w-4 h-4 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+            </CardTitle>
+            <CardDescription>Configure your AI assistant for personalized SMS messages</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {aiConfig ? (
+              <div className="flex items-center gap-2 text-sm text-zinc-600">
+                <CheckCircle2 className="w-4 h-4 text-green-500" />
+                <span className="capitalize">{aiConfig.provider}</span> connected
+                {org?.aiPersonalization && <Badge variant="secondary" className="bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">Personalization on</Badge>}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-600">No AI provider configured yet. Set up your AI assistant to get started.</p>
+            )}
+          </CardContent>
+        </Card>
+      </Link>
 
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="w-5 h-5" />Notifications</CardTitle></CardHeader>

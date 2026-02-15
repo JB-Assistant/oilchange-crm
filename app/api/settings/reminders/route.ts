@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { seedOrgDefaults } from "@/lib/seed-defaults"
+import { ensureOrganization } from "@/lib/ensure-org"
 
 export async function GET() {
   try {
@@ -9,6 +9,9 @@ export async function GET() {
     if (!orgId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+
+    // Ensure org exists (creates + seeds defaults if webhook hasn't fired yet)
+    await ensureOrganization(orgId)
 
     const org = await prisma.organization.findUnique({
       where: { clerkOrgId: orgId },
@@ -19,17 +22,9 @@ export async function GET() {
       }
     })
 
-    let serviceTypes = await prisma.serviceType.findMany({
+    const serviceTypes = await prisma.serviceType.findMany({
       where: { orgId },
     })
-
-    // Lazy-init defaults for existing orgs that predate seeding
-    if (serviceTypes.length === 0) {
-      await seedOrgDefaults(orgId)
-      serviceTypes = await prisma.serviceType.findMany({
-        where: { orgId },
-      })
-    }
 
     return NextResponse.json({
       settings: org ? {
@@ -53,6 +48,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { settings, serviceTypes } = await req.json()
+
+    // Ensure org exists before updating
+    await ensureOrganization(orgId)
 
     // Update organization settings
     await prisma.organization.update({
