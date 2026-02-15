@@ -168,7 +168,7 @@ export function StepReview({
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Existing duplicates will be skipped during import.
+              Existing customers will be enriched with new vehicle and service data. Rows with no new data will be skipped.
             </p>
           </CardContent>
         </Card>

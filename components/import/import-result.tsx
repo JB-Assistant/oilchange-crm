@@ -1,15 +1,7 @@
 'use client'
 
-import { CheckCircle2, AlertCircle } from 'lucide-react'
-
-interface ImportResultData {
-  success: number
-  errors: number
-  duplicates: number
-  message: string
-  format?: string
-  details?: string[]
-}
+import { CheckCircle2, AlertCircle, AlertTriangle, Car, Wrench, RefreshCw } from 'lucide-react'
+import type { ImportResultData } from '@/lib/import/types'
 
 export function ImportResult({ result }: { result: ImportResultData }) {
   return (
@@ -27,11 +19,20 @@ export function ImportResult({ result }: { result: ImportResultData }) {
           Detected format: <span className="font-medium">{result.format}</span>
         </p>
       )}
-      <div className="grid grid-cols-3 gap-4 text-sm">
+      <div className={`grid gap-4 text-sm ${result.updated ? 'grid-cols-4' : 'grid-cols-3'}`}>
         <div>
           <span className="text-2xl font-bold text-green-600">{result.success}</span>
           <p className="text-zinc-600">Imported</p>
         </div>
+        {!!result.updated && (
+          <div>
+            <div className="flex items-center gap-1">
+              <RefreshCw className="w-4 h-4 text-blue-500" />
+              <span className="text-2xl font-bold text-blue-600">{result.updated}</span>
+            </div>
+            <p className="text-zinc-600">Enriched</p>
+          </div>
+        )}
         <div>
           <span className="text-2xl font-bold text-yellow-600">{result.duplicates}</span>
           <p className="text-zinc-600">Duplicates</p>
@@ -41,6 +42,38 @@ export function ImportResult({ result }: { result: ImportResultData }) {
           <p className="text-zinc-600">Errors</p>
         </div>
       </div>
+      {(result.vehiclesCreated !== undefined || result.serviceRecordsCreated !== undefined) && (
+        <div className="grid grid-cols-2 gap-4 text-sm mt-3 pt-3 border-t border-zinc-200">
+          <div className="flex items-center gap-2">
+            <Car className="w-4 h-4 text-zinc-500" />
+            <span className="text-2xl font-bold text-zinc-700">{result.vehiclesCreated ?? 0}</span>
+            <p className="text-zinc-600">Vehicles</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-zinc-500" />
+            <span className="text-2xl font-bold text-zinc-700">{result.serviceRecordsCreated ?? 0}</span>
+            <p className="text-zinc-600">Service Records</p>
+          </div>
+        </div>
+      )}
+      {result.warnings && result.warnings.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-yellow-200">
+          <div className="flex items-center gap-1 mb-1">
+            <AlertTriangle className="w-4 h-4 text-yellow-600" />
+            <p className="text-sm font-medium text-yellow-700">Warnings:</p>
+          </div>
+          <ul className="space-y-1 text-sm text-yellow-600">
+            {result.warnings.map((warning, i) => (
+              <li key={i}>{warning}</li>
+            ))}
+          </ul>
+          {(result.warnings.length >= 10) && (
+            <p className="text-xs text-yellow-500 mt-1">
+              Showing first 10 warnings
+            </p>
+          )}
+        </div>
+      )}
       {result.details && result.details.length > 0 && (
         <div className="mt-3 pt-3 border-t border-red-200">
           <p className="text-sm font-medium text-red-700 mb-1">Error details:</p>

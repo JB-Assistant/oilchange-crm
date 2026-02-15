@@ -3,6 +3,12 @@ import { CustomerStatus, Prisma } from '@prisma/client'
 import { calculateNextDueDate, calculateNextDueMileage } from '@/lib/customer-status'
 import { inferServiceType } from './data-cleaners'
 
+export interface ImportRowResult {
+  status: 'success' | 'duplicate' | 'updated' | 'error'
+  message: string
+  created: { customer: boolean; vehicle: boolean; serviceRecord: boolean }
+}
+
 interface CleanedImportRow {
   firstName: string
   lastName: string
@@ -22,23 +28,77 @@ export async function processImportRow(
   row: CleanedImportRow,
   orgId: string,
   smsConsent: boolean
-): Promise<'success' | 'duplicate' | string> {
+): Promise<ImportRowResult> {
+  const noCreation = { customer: false, vehicle: false, serviceRecord: false }
+
   if (!row.phone || row.phone.length < 10) {
-    return 'Invalid phone number'
+    return { status: 'error', message: 'Invalid phone number', created: noCreation }
   }
   if (!row.firstName) {
-    return 'Missing first name'
+    return { status: 'error', message: 'Missing first name', created: noCreation }
   }
-
-  const existing = await prisma.customer.findFirst({
-    where: { orgId, phone: row.phone },
-  })
-  if (existing) return 'duplicate'
 
   const mileage = row.lastServiceMileage ? parseInt(row.lastServiceMileage) : null
   const serviceDate = row.lastServiceDate ? new Date(row.lastServiceDate) : null
   const serviceType = row.repairDescription ? inferServiceType(row.repairDescription) : 'oil_change'
   const hasVehicle = !!(row.vehicleYear && row.vehicleMake && row.vehicleModel)
+  const hasService = !!(serviceDate && mileage && !isNaN(serviceDate.getTime()))
+
+  const existing = await prisma.customer.findFirst({
+    where: { orgId, phone: row.phone },
+    include: { vehicles: { select: { year: true, make: true, model: true } } },
+  })
+
+  if (existing) {
+    if (!hasVehicle) {
+      return { status: 'duplicate', message: 'No new data to add', created: noCreation }
+    }
+
+    const importYear = parseInt(row.vehicleYear)
+    const alreadyHasVehicle = existing.vehicles.some(
+      v =>
+        v.year === importYear &&
+        v.make.toLowerCase() === row.vehicleMake.toLowerCase() &&
+        v.model.toLowerCase() === row.vehicleModel.toLowerCase()
+    )
+
+    if (alreadyHasVehicle) {
+      return { status: 'duplicate', message: 'Vehicle already exists', created: noCreation }
+    }
+
+    try {
+      await prisma.vehicle.create({
+        data: {
+          customerId: existing.id,
+          year: importYear,
+          make: row.vehicleMake,
+          model: row.vehicleModel,
+          vin: row.vin || null,
+          licensePlate: row.licensePlate || null,
+          mileageAtLastService: mileage || null,
+          serviceRecords: hasService ? {
+            create: [{
+              serviceDate: serviceDate!,
+              mileageAtService: mileage!,
+              serviceType,
+              notes: row.repairDescription || null,
+              nextDueDate: calculateNextDueDate(serviceDate!),
+              nextDueMileage: calculateNextDueMileage(mileage!),
+            }],
+          } : undefined,
+        },
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      return { status: 'error', message: `Failed to enrich: ${msg}`, created: noCreation }
+    }
+
+    return {
+      status: 'updated',
+      message: 'Enriched existing customer with new vehicle',
+      created: { customer: false, vehicle: true, serviceRecord: hasService },
+    }
+  }
 
   const customerData: Prisma.CustomerUncheckedCreateInput = {
     firstName: row.firstName,
@@ -53,7 +113,6 @@ export async function processImportRow(
 
   if (hasVehicle) {
     const year = parseInt(row.vehicleYear)
-    const hasService = !!(serviceDate && mileage && !isNaN(serviceDate.getTime()))
 
     customerData.vehicles = {
       create: [{
@@ -81,7 +140,7 @@ export async function processImportRow(
     await prisma.customer.create({ data: customerData })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'
-    return `Failed to save: ${msg}`
+    return { status: 'error', message: `Failed to save: ${msg}`, created: noCreation }
   }
 
   if (smsConsent) {
@@ -103,7 +162,15 @@ export async function processImportRow(
     }
   }
 
-  return 'success'
+  return {
+    status: 'success',
+    message: 'Imported successfully',
+    created: {
+      customer: true,
+      vehicle: hasVehicle,
+      serviceRecord: hasVehicle && hasService,
+    },
+  }
 }
 
 export function rowsToCleanedImport(

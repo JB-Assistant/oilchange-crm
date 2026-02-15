@@ -78,9 +78,13 @@ export interface ImportResultData {
   success: number
   errors: number
   duplicates: number
+  updated?: number
   message: string
   format?: string
   details?: string[]
+  vehiclesCreated?: number
+  serviceRecordsCreated?: number
+  warnings?: string[]
 }
 
 export interface WizardState {
