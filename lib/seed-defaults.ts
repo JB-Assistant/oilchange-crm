@@ -213,6 +213,217 @@ const DEFAULT_SERVICE_TYPES: ServiceTypeDefault[] = [
     defaultTimeIntervalDays: 365,
     reminderLeadDays: 30,
   },
+  // Alignment category
+  {
+    name: 'wheel_alignment_check',
+    displayName: 'Wheel Alignment Check',
+    category: 'alignment',
+    description: 'Check and adjust wheel alignment angles',
+    sortOrder: 0,
+    defaultMileageInterval: 12000,
+    defaultTimeIntervalDays: 365,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'wheel_alignment_full',
+    displayName: 'Full Wheel Alignment',
+    category: 'alignment',
+    description: 'Complete four-wheel alignment service',
+    sortOrder: 1,
+    defaultMileageInterval: 24000,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
+  // Engine category
+  {
+    name: 'spark_plug_replacement',
+    displayName: 'Spark Plug Replacement',
+    category: 'engine',
+    description: 'Replace spark plugs for optimal ignition',
+    sortOrder: 0,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'engine_tune_up',
+    displayName: 'Engine Tune-Up',
+    category: 'engine',
+    description: 'Comprehensive engine tune-up service',
+    sortOrder: 1,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
+  // Belts category
+  {
+    name: 'timing_belt_inspection',
+    displayName: 'Timing Belt Inspection',
+    category: 'belts',
+    description: 'Inspect timing belt condition and tension',
+    sortOrder: 0,
+    defaultMileageInterval: 50000,
+    defaultTimeIntervalDays: 1825,
+    reminderLeadDays: 30,
+  },
+  {
+    name: 'timing_belt_replacement',
+    displayName: 'Timing Belt Replacement',
+    category: 'belts',
+    description: 'Replace timing belt to prevent engine damage',
+    sortOrder: 1,
+    defaultMileageInterval: 60000,
+    defaultTimeIntervalDays: 2190,
+    reminderLeadDays: 30,
+  },
+  {
+    name: 'serpentine_belt',
+    displayName: 'Serpentine Belt',
+    category: 'belts',
+    description: 'Inspect and replace serpentine/drive belt',
+    sortOrder: 2,
+    defaultMileageInterval: 60000,
+    defaultTimeIntervalDays: 1460,
+    reminderLeadDays: 14,
+  },
+  // Fuel system category
+  {
+    name: 'fuel_filter',
+    displayName: 'Fuel Filter Replacement',
+    category: 'fuel_system',
+    description: 'Replace fuel filter for clean fuel delivery',
+    sortOrder: 0,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'fuel_injection_cleaning',
+    displayName: 'Fuel Injection Cleaning',
+    category: 'fuel_system',
+    description: 'Clean fuel injectors and throttle body',
+    sortOrder: 1,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  // Drivetrain category
+  {
+    name: 'differential_fluid',
+    displayName: 'Differential Fluid Service',
+    category: 'drivetrain',
+    description: 'Replace differential fluid (front/rear)',
+    sortOrder: 0,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'transfer_case_fluid',
+    displayName: 'Transfer Case Fluid',
+    category: 'drivetrain',
+    description: 'Replace transfer case fluid (4WD/AWD vehicles)',
+    sortOrder: 1,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  // AC category
+  {
+    name: 'ac_recharge',
+    displayName: 'AC Recharge',
+    category: 'ac',
+    description: 'Recharge vehicle AC refrigerant',
+    sortOrder: 0,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 30,
+  },
+  {
+    name: 'ac_system_inspection',
+    displayName: 'AC System Inspection',
+    category: 'ac',
+    description: 'Full AC system performance check',
+    sortOrder: 1,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 365,
+    reminderLeadDays: 14,
+  },
+  // Exhaust category
+  {
+    name: 'exhaust_inspection',
+    displayName: 'Exhaust System Inspection',
+    category: 'exhaust',
+    description: 'Inspect exhaust system for leaks and damage',
+    sortOrder: 0,
+    defaultMileageInterval: 30000,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
+  // Suspension category
+  {
+    name: 'suspension_inspection',
+    displayName: 'Suspension Inspection',
+    category: 'suspension',
+    description: 'Inspect shocks, struts, and suspension components',
+    sortOrder: 0,
+    defaultMileageInterval: 50000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'shock_strut_replacement',
+    displayName: 'Shock/Strut Replacement',
+    category: 'suspension',
+    description: 'Replace worn shocks or struts',
+    sortOrder: 1,
+    defaultMileageInterval: 50000,
+    defaultTimeIntervalDays: null,
+    reminderLeadDays: 14,
+  },
+  // Emissions category
+  {
+    name: 'emissions_test',
+    displayName: 'Emissions / Smog Test',
+    category: 'emissions',
+    description: 'State emissions or smog test',
+    sortOrder: 0,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 365,
+    reminderLeadDays: 30,
+  },
+  // Lighting category
+  {
+    name: 'headlight_restoration',
+    displayName: 'Headlight Restoration',
+    category: 'lighting',
+    description: 'Restore cloudy/yellowed headlight lenses',
+    sortOrder: 0,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
+  {
+    name: 'bulb_replacement',
+    displayName: 'Headlight/Bulb Replacement',
+    category: 'lighting',
+    description: 'Replace headlight, taillight, or signal bulbs',
+    sortOrder: 1,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
+  // Radiator category
+  {
+    name: 'radiator_hose_inspection',
+    displayName: 'Radiator Hose Inspection',
+    category: 'cooling',
+    description: 'Inspect radiator hoses for cracks, bulges, and leaks',
+    sortOrder: 2,
+    defaultMileageInterval: null,
+    defaultTimeIntervalDays: 730,
+    reminderLeadDays: 14,
+  },
 ]
 
 const TEMPLATE_DEFS = [
@@ -244,31 +455,48 @@ export const SERVICE_CATEGORIES: Record<string, string> = {
   wipers: 'Wipers',
   fluids: 'Fluids',
   inspection: 'Inspection',
+  alignment: 'Wheel Alignment',
+  engine: 'Engine',
+  belts: 'Belts & Timing',
+  fuel_system: 'Fuel System',
+  drivetrain: 'Drivetrain',
+  ac: 'AC / Climate',
+  exhaust: 'Exhaust',
+  suspension: 'Suspension',
+  emissions: 'Emissions',
+  lighting: 'Lighting',
   general: 'General',
 }
 
 async function ensureServiceTypes(orgId: string) {
-  const count = await prisma.serviceType.count({ where: { orgId } })
-  if (count > 0) return prisma.serviceType.findMany({ where: { orgId } })
+  const existing = await prisma.serviceType.findMany({
+    where: { orgId },
+    select: { name: true },
+  })
+  const existingNames = new Set(existing.map((st) => st.name))
 
-  return Promise.all(
-    DEFAULT_SERVICE_TYPES.map((st) =>
-      prisma.serviceType.create({
-        data: {
-          orgId,
-          name: st.name,
-          displayName: st.displayName,
-          category: st.category,
-          description: st.description,
-          sortOrder: st.sortOrder,
-          defaultMileageInterval: st.defaultMileageInterval,
-          defaultTimeIntervalDays: st.defaultTimeIntervalDays,
-          reminderLeadDays: st.reminderLeadDays,
-          isCustom: false,
-        },
-      })
-    )
+  const missing = DEFAULT_SERVICE_TYPES.filter(
+    (st) => !existingNames.has(st.name)
   )
+
+  if (missing.length > 0) {
+    await prisma.serviceType.createMany({
+      data: missing.map((st) => ({
+        orgId,
+        name: st.name,
+        displayName: st.displayName,
+        category: st.category,
+        description: st.description,
+        sortOrder: st.sortOrder,
+        defaultMileageInterval: st.defaultMileageInterval,
+        defaultTimeIntervalDays: st.defaultTimeIntervalDays,
+        reminderLeadDays: st.reminderLeadDays,
+        isCustom: false,
+      })),
+    })
+  }
+
+  return prisma.serviceType.findMany({ where: { orgId } })
 }
 
 async function ensureTemplates(orgId: string) {
