@@ -16,6 +16,7 @@ import {
   Settings,
   Menu,
   Bell,
+  Calendar,
   Palette,
 } from 'lucide-react'
 import {
@@ -79,6 +80,9 @@ export default function DashboardLayout({
             </NavItem>
             <NavItem href="/services" icon={<Wrench className="w-4 h-4" />}>
               Services
+            </NavItem>
+            <NavItem href="/appointments" icon={<Calendar className="w-4 h-4" />}>
+              Appointments
             </NavItem>
             <NavItem href="/dashboard/reminders" icon={<Bell className="w-4 h-4" />}>
               SMS Reminders

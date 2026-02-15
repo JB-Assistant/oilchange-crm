@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Phone, MessageSquare } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { useToast } from '@/components/ui/toast'
 
 interface FollowUpFormProps {
   customerId: string
@@ -31,6 +32,7 @@ export function FollowUpForm({ customerId, serviceRecordId }: FollowUpFormProps)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+  const { addToast } = useToast()
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -53,9 +55,14 @@ export function FollowUpForm({ customerId, serviceRecordId }: FollowUpFormProps)
       })
       
       if (response.ok) {
+        addToast('Follow-up logged', 'success')
         setOpen(false)
         router.refresh()
+      } else {
+        addToast('Failed to log follow-up', 'destructive')
       }
+    } catch {
+      addToast('Failed to log follow-up', 'destructive')
     } finally {
       setLoading(false)
     }

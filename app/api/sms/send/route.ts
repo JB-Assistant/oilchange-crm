@@ -2,13 +2,8 @@ import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/twilio'
-
-interface SendSmsBody {
-  customerId: string
-  body: string
-  vehicleId?: string
-  serviceRecordId?: string
-}
+import { sendSmsSchema } from '@/lib/validations'
+import { ZodError } from 'zod'
 
 export async function POST(request: NextRequest) {
   const { orgId } = await auth()
@@ -17,15 +12,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const json: SendSmsBody = await request.json()
-  const { customerId, body, vehicleId, serviceRecordId } = json
-
-  if (!customerId || !body?.trim()) {
-    return NextResponse.json(
-      { error: 'customerId and body are required' },
-      { status: 400 }
-    )
+  let data
+  try {
+    const json = await request.json()
+    data = sendSmsSchema.parse(json)
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    }
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
+
+  const { customerId, body, vehicleId, serviceRecordId } = data
 
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, orgId },

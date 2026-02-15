@@ -1,6 +1,9 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
+import { createFollowUpSchema } from '@/lib/validations'
+import { ZodError } from 'zod'
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,8 +16,8 @@ export async function GET(request: NextRequest) {
     const customerId = searchParams.get('customerId')
     const limit = parseInt(searchParams.get('limit') || '50')
 
-    const where: any = { orgId }
-    
+    const where: Prisma.FollowUpRecordWhereInput = { orgId }
+
     if (customerId) {
       where.customerId = customerId
     }
@@ -59,7 +62,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { customerId, serviceRecordId, method, outcome, notes, staffMember } = body
+    const data = createFollowUpSchema.parse(body)
+    const { customerId, serviceRecordId, method, outcome, notes, staffMember } = data
 
     // Verify customer belongs to this org
     const customer = await prisma.customer.findFirst({
@@ -99,6 +103,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(record, { status: 201 })
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    }
     console.error('Error creating follow-up record:', error)
     return NextResponse.json({ error: 'Failed to create follow-up record' }, { status: 500 })
   }

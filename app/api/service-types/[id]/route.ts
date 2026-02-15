@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 // PATCH /api/service-types/[id] - Update service type
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId, orgId } = await auth();
@@ -13,9 +13,10 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
     const body = await req.json();
     const serviceType = await prisma.serviceType.update({
-      where: { id: params.id, orgId },
+      where: { id, orgId },
       data: body,
     });
 
@@ -29,7 +30,7 @@ export async function PATCH(
 // DELETE /api/service-types/[id] - Delete service type
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId, orgId } = await auth();
@@ -37,8 +38,9 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
     await prisma.serviceType.delete({
-      where: { id: params.id, orgId },
+      where: { id, orgId },
     });
 
     return NextResponse.json({ success: true });

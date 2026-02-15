@@ -1,8 +1,10 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus, Prisma } from '@prisma/client'
 import { calculateNextDueDate, calculateNextDueMileage, getStatusFromDueDate } from '@/lib/customer-status'
+import { createServiceRecordSchema } from '@/lib/validations'
+import { ZodError } from 'zod'
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,12 +16,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const vehicleId = searchParams.get('vehicleId')
 
-    const where: any = {
+    const where: Prisma.ServiceRecordWhereInput = {
       vehicle: {
         customer: { orgId }
       }
     }
-    
+
     if (vehicleId) {
       where.vehicleId = vehicleId
     }
@@ -51,7 +53,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { vehicleId, serviceDate, mileageAtService, serviceType, notes } = body
+    const data = createServiceRecordSchema.parse(body)
+    const { vehicleId, serviceDate, mileageAtService, serviceType, notes } = data
 
     // Verify vehicle belongs to this org
     const vehicle = await prisma.vehicle.findFirst({
@@ -68,10 +71,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
     }
 
-    // Calculate next due date and mileage
+    // Look up service type intervals (fall back to defaults if not found)
     const serviceDateObj = new Date(serviceDate)
-    const nextDueDate = calculateNextDueDate(serviceDateObj)
-    const nextDueMileage = calculateNextDueMileage(mileageAtService)
+    const serviceTypeDef = await prisma.serviceType.findFirst({
+      where: { orgId, name: serviceType || 'oil_change_standard' },
+    })
+    const nextDueDate = calculateNextDueDate(serviceDateObj, serviceTypeDef?.defaultTimeIntervalDays)
+    const nextDueMileage = calculateNextDueMileage(mileageAtService, serviceTypeDef?.defaultMileageInterval)
 
     // Create service record
     const record = await prisma.serviceRecord.create({
@@ -97,6 +103,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(record, { status: 201 })
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    }
     console.error('Error creating service record:', error)
     return NextResponse.json({ error: 'Failed to create service record' }, { status: 500 })
   }
@@ -115,7 +124,7 @@ async function updateCustomerStatus(customerId: string, orgId: string) {
   })
 
   // Determine the most urgent status across all vehicles
-  let mostUrgentStatus = CustomerStatus.up_to_date
+  let mostUrgentStatus: CustomerStatus = CustomerStatus.up_to_date
   
   for (const vehicle of vehicles) {
     const latestService = vehicle.serviceRecords[0]
@@ -130,7 +139,7 @@ async function updateCustomerStatus(customerId: string, orgId: string) {
       if (status === CustomerStatus.overdue) {
         mostUrgentStatus = CustomerStatus.overdue
         break
-      } else if (status === CustomerStatus.due_now && mostUrgentStatus !== CustomerStatus.overdue) {
+      } else if (status === CustomerStatus.due_now) {
         mostUrgentStatus = CustomerStatus.due_now
       } else if (status === CustomerStatus.due_soon && mostUrgentStatus === CustomerStatus.up_to_date) {
         mostUrgentStatus = CustomerStatus.due_soon

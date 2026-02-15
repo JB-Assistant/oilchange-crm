@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { MessageStatus } from "@prisma/client";
 import { processInboundMessage } from "@/lib/sms-queue";
 import { validateRequest } from "twilio";
 import { decrypt, isEncrypted } from "@/lib/crypto";
@@ -92,13 +93,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function mapTwilioStatus(status: string): string {
-  const statusMap: Record<string, string> = {
-    queued: "queued",
-    sent: "sent",
-    delivered: "delivered",
-    failed: "failed",
-    undelivered: "undelivered",
+function mapTwilioStatus(status: string): MessageStatus {
+  const statusMap: Record<string, MessageStatus> = {
+    queued: MessageStatus.queued,
+    sent: MessageStatus.sent,
+    delivered: MessageStatus.delivered,
+    failed: MessageStatus.failed,
+    undelivered: MessageStatus.undelivered,
   };
-  return statusMap[status] || "sent";
+  return statusMap[status] || MessageStatus.sent;
 }

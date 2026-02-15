@@ -16,7 +16,13 @@ model Organization {
   subscriptionStatus String @default("trial") // trial, active, canceled, past_due
   subscriptionTier String   @default("starter") // starter, professional, enterprise
   trialEndsAt   DateTime?
-  
+
+  // Stripe billing
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  currentPeriodEnd     DateTime?
+
   // ServicePing additions
   phone         String?
   reminderEnabled Boolean @default(false)
@@ -36,7 +42,9 @@ model Organization {
   reminderMessages ReminderMessage[]
   consentLogs   ConsentLog[]
   twilioConfig  TwilioConfig?
-  
+  appointments  Appointment[]
+  locations     Location[]
+
   @@map("organizations")
 }
 
@@ -47,25 +55,28 @@ model Customer {
   phone       String
   email       String?
   status      CustomerStatus @default(up_to_date)
-  
+  tags        String[] @default([])
+
   // ServicePing additions
   smsConsent  Boolean @default(false)
   smsConsentDate DateTime?
   preferredContactTime String?
-  
+
   orgId       String
   organization Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
-  
+
   vehicles    Vehicle[]
   followUpRecords FollowUpRecord[]
-  
+  notes       CustomerNote[]
+  appointments Appointment[]
+
   // ServicePing relations
   reminderMessages ReminderMessage[]
   consentLogs   ConsentLog[]
-  
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   @@index([orgId])
   @@index([status])
   @@index([phone])
@@ -89,10 +100,11 @@ model Vehicle {
   
   // ServicePing relations
   reminderMessages ReminderMessage[]
-  
+  appointments     Appointment[]
+
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
-  
+
   @@index([customerId])
   @@map("vehicles")
 }
@@ -154,23 +166,27 @@ model ServiceType {
   id                    String   @id @default(cuid())
   orgId                 String
   organization          Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
-  
-  name                  String   // slug: oil_change, tire_rotation, etc.
-  displayName           String   // "Oil Change (Synthetic)"
+
+  name                  String   // slug: oil_change_standard, brake_pad_inspection, etc.
+  displayName           String   // "Oil Change (Standard)"
+  category              String   @default("general") // oil_change, tires, brakes, etc.
+  description           String?  // Brief description of the service
+  sortOrder             Int      @default(0) // Display ordering within category
   defaultMileageInterval Int?    // 5000, 7500, etc.
   defaultTimeIntervalDays Int?   // 90, 180, etc.
   reminderLeadDays      Int      @default(14) // 2 weeks before
-  
+
   isActive              Boolean  @default(true)
   isCustom              Boolean  @default(true) // false for system defaults
-  
+
   reminderRules         ReminderRule[]
-  
+
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
-  
+
   @@index([orgId])
   @@index([isActive])
+  @@index([category])
   @@map("service_types")
 }
 
@@ -182,6 +198,7 @@ model ReminderRule {
   serviceTypeId   String
   serviceType     ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Cascade)
   
+  reminderType    String   @default("service_due") // service_due, follow_up, appointment
   sequenceNumber  Int      // 1=first reminder, 2=due date, 3=overdue
   offsetDays      Int      // -14 = 2 weeks before, 0 = on due date, 7 = 1 week after
   
@@ -301,6 +318,71 @@ model TwilioConfig {
   @@map("twilio_configs")
 }
 
+model Location {
+  id              String   @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
+
+  name            String
+  address         String?
+  phone           String?
+  isDefault       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+
+  appointments    Appointment[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgId])
+  @@map("locations")
+}
+
+model Appointment {
+  id              String   @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
+
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  vehicleId       String?
+  vehicle         Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+
+  scheduledAt     DateTime
+  duration        Int      @default(60) // minutes
+  status          AppointmentStatus @default(scheduled)
+
+  locationId      String?
+  location        Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  serviceTypeNames String[] @default([])
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+model CustomerNote {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  body        String
+  createdBy   String   // userId from Clerk
+
+  createdAt   DateTime @default(now())
+
+  @@index([customerId])
+  @@map("customer_notes")
+}
+
 // ==================== Enums ====================
 
 enum CustomerStatus {
@@ -336,6 +418,15 @@ enum MessageStatus {
 enum MessageDirection {
   outbound
   inbound
+}
+
+enum AppointmentStatus {
+  scheduled
+  confirmed
+  in_progress
+  completed
+  cancelled
+  no_show
 }
 
 enum ConsentAction {

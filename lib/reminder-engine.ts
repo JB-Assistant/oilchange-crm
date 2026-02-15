@@ -39,9 +39,9 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
       return { queued: 0, errors: ['Twilio not configured or inactive'] }
     }
 
-    // 3. Fetch active reminder rules with templates
+    // 3. Fetch active service_due reminder rules with templates
     const rules = await prisma.reminderRule.findMany({
-      where: { orgId: org.clerkOrgId, isActive: true },
+      where: { orgId: org.clerkOrgId, isActive: true, reminderType: 'service_due' },
       include: {
         template: true,
         serviceType: true,
@@ -160,9 +160,11 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
 
 function getFallbackTemplate(sequenceNumber: number): string {
   switch (sequenceNumber) {
-    case 1: return DEFAULT_TEMPLATES.firstReminder
-    case 2: return DEFAULT_TEMPLATES.dueDateReminder
-    case 3: return DEFAULT_TEMPLATES.overdueReminder
-    default: return DEFAULT_TEMPLATES.firstReminder
+    case 1: return DEFAULT_TEMPLATES.twoWeeksBefore
+    case 2: return DEFAULT_TEMPLATES.oneWeekBefore
+    case 3: return DEFAULT_TEMPLATES.dueDateReminder
+    case 4: return DEFAULT_TEMPLATES.oneWeekOverdue
+    case 5: return DEFAULT_TEMPLATES.twoWeeksOverdue
+    default: return DEFAULT_TEMPLATES.twoWeeksBefore
   }
 }

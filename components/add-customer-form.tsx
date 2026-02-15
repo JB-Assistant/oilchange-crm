@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { useRouter } from 'next/navigation'
 import { Plus, Trash2 } from 'lucide-react'
+import { useToast } from '@/components/ui/toast'
 
 interface VehicleInput {
   year: string
@@ -17,6 +18,7 @@ interface VehicleInput {
 
 export function AddCustomerForm() {
   const router = useRouter()
+  const { addToast } = useToast()
   const [loading, setLoading] = useState(false)
   const [vehicles, setVehicles] = useState<VehicleInput[]>([{
     year: '',
@@ -67,8 +69,14 @@ export function AddCustomerForm() {
       
       if (response.ok) {
         const data = await response.json()
+        addToast('Customer created successfully', 'success')
         router.push(`/customers/${data.id}`)
+      } else {
+        const data = await response.json().catch(() => ({}))
+        addToast((data as { error?: string }).error || 'Failed to create customer', 'destructive')
       }
+    } catch {
+      addToast('Failed to create customer', 'destructive')
     } finally {
       setLoading(false)
     }

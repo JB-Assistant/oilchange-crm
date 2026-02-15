@@ -1,6 +1,9 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
+import { createVehicleSchema } from '@/lib/validations'
+import { ZodError } from 'zod'
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,10 +15,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const customerId = searchParams.get('customerId')
 
-    const where: any = {
+    const where: Prisma.VehicleWhereInput = {
       customer: { orgId }
     }
-    
+
     if (customerId) {
       where.customerId = customerId
     }
@@ -53,11 +56,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { customerId, year, make, model, licensePlate } = body
+    const data = createVehicleSchema.parse(body)
 
     // Verify customer belongs to this org
     const customer = await prisma.customer.findFirst({
-      where: { id: customerId, orgId }
+      where: { id: data.customerId, orgId }
     })
 
     if (!customer) {
@@ -66,16 +69,19 @@ export async function POST(request: NextRequest) {
 
     const vehicle = await prisma.vehicle.create({
       data: {
-        customerId,
-        year,
-        make,
-        model,
-        licensePlate: licensePlate || null
+        customerId: data.customerId,
+        year: data.year,
+        make: data.make,
+        model: data.model,
+        licensePlate: data.licensePlate || null
       }
     })
 
     return NextResponse.json(vehicle, { status: 201 })
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    }
     console.error('Error creating vehicle:', error)
     return NextResponse.json({ error: 'Failed to create vehicle' }, { status: 500 })
   }

@@ -59,14 +59,21 @@ export const getStatusFromDueDate = (nextDueDate: Date, nextDueMileage: number, 
   return CustomerStatus.up_to_date
 }
 
-// Calculate next due date (3 months from service date)
-export const calculateNextDueDate = (serviceDate: Date): Date => {
+/**
+ * Calculate next due date based on service type's time interval.
+ * Falls back to 90 days if no intervalDays provided.
+ */
+export const calculateNextDueDate = (serviceDate: Date, intervalDays?: number | null): Date => {
+  const days = intervalDays ?? 90
   const nextDue = new Date(serviceDate)
-  nextDue.setMonth(nextDue.getMonth() + 3)
+  nextDue.setDate(nextDue.getDate() + days)
   return nextDue
 }
 
-// Calculate next due mileage (5000 miles from service mileage)
-export const calculateNextDueMileage = (mileageAtService: number): number => {
-  return mileageAtService + 5000
+/**
+ * Calculate next due mileage based on service type's mileage interval.
+ * Falls back to 5000 miles if no intervalMiles provided.
+ */
+export const calculateNextDueMileage = (mileageAtService: number, intervalMiles?: number | null): number => {
+  return mileageAtService + (intervalMiles ?? 5000)
 }

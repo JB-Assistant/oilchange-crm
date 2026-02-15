@@ -28,7 +28,7 @@ async function main() {
       email: 'john@example.com',
       status: CustomerStatus.overdue,
       vehicles: [
-        { year: 2019, make: 'Toyota', make: 'Toyota', model: 'Camry', licensePlate: 'ABC123' }
+        { year: 2019, make: 'Toyota', model: 'Camry', licensePlate: 'ABC123' }
       ],
       lastService: { daysAgo: 120, mileage: 45000 }
     },
