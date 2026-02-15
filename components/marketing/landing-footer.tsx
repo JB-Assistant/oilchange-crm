@@ -11,6 +11,8 @@ export function LandingFooter() {
             <Link href="/sign-in" className="hover:text-white transition-colors">Sign In</Link>
             <Link href="/sign-up" className="hover:text-white transition-colors">Hire Otto</Link>
             <a href="mailto:hello@ottomanagerpro.com" className="hover:text-white transition-colors">Contact</a>
+            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
+            <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
           </nav>
         </div>
         <div className="border-t border-slate-800 mt-8 pt-8 text-center text-sm">

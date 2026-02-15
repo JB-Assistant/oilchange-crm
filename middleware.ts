@@ -11,6 +11,8 @@ const isProtectedRoute = createRouteMatcher([
 
 const isPublicRoute = createRouteMatcher([
   '/',
+  '/privacy',
+  '/terms',
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks(.*)'
