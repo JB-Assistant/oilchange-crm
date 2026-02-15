@@ -9,26 +9,37 @@ export function ImportGuidelines() {
       <CardContent>
         <div className="space-y-4">
           <div>
-            <h4 className="font-medium text-sm mb-2">Standard Format</h4>
-            <ul className="space-y-1 text-sm text-zinc-600">
-              <li>- Required: firstName, lastName, phone</li>
-              <li>- Optional: email, vehicleYear, vehicleMake, vehicleModel, licensePlate, lastServiceDate, lastServiceMileage</li>
+            <h4 className="font-medium text-sm mb-2">Supported Formats</h4>
+            <ul className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+              <li>- CSV files (.csv)</li>
+              <li>- Excel files (.xlsx, .xls)</li>
+              <li>- QuickBooks exports (Display Name, Main Phone, etc.)</li>
+              <li>- Shop management tools (Tekmetric, Mitchell, etc.)</li>
             </ul>
           </div>
           <div>
-            <h4 className="font-medium text-sm mb-2">Shop Format (auto-detected)</h4>
-            <ul className="space-y-1 text-sm text-zinc-600">
-              <li>- Required: Phone</li>
-              <li>- Optional: Full Name, Year/Make/Model, VIN Code, Current Milleage, Repair Description</li>
+            <h4 className="font-medium text-sm mb-2">Smart Field Mapping</h4>
+            <ul className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+              <li>- Columns are auto-detected from common header names</li>
+              <li>- Adjust mappings manually if auto-detection is wrong</li>
+              <li>- Phone and a name field (First Name or Full Name) are required</li>
             </ul>
           </div>
           <div>
-            <h4 className="font-medium text-sm mb-2">General</h4>
-            <ul className="space-y-1 text-sm text-zinc-600">
-              <li>- Format is auto-detected from column headers</li>
-              <li>- Phone numbers are cleaned automatically (country code stripped)</li>
-              <li>- Duplicate detection is based on phone number</li>
-              <li>- Dates should be in YYYY-MM-DD format</li>
+            <h4 className="font-medium text-sm mb-2">Data Cleaning</h4>
+            <ul className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+              <li>- Phone numbers are auto-normalized (strips formatting, country code)</li>
+              <li>- Full names are split into first/last name</li>
+              <li>- Dates are normalized to standard format</li>
+              <li>- Click any cell in the cleaning step to edit manually</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-medium text-sm mb-2">Duplicate Detection</h4>
+            <ul className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+              <li>- Duplicates are detected by phone number</li>
+              <li>- Both within-file and existing customer duplicates are shown</li>
+              <li>- Duplicate rows are automatically skipped during import</li>
             </ul>
           </div>
         </div>

@@ -37,7 +37,8 @@
     "stripe": "^20.3.1",
     "svix": "^1.84.1",
     "tailwind-merge": "^3.4.0",
-    "twilio": "^5.12.1"
+    "twilio": "^5.12.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

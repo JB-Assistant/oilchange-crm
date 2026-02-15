@@ -1,11 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { CustomerStatus, Prisma } from '@prisma/client'
-import { calculateNextDueDate, calculateNextDueMileage } from '@/lib/customer-status'
 import { ensureOrganization } from '@/lib/ensure-org'
-
-type CSVFormat = 'standard' | 'shop'
+import { processImportRow, rowsToCleanedImport } from '@/lib/import/process-rows'
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,331 +10,167 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const formData = await request.formData()
-    const file = formData.get('file') as File
-    const smsConsent = formData.get('smsConsent') === 'true'
-
-    if (!file) {
-      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
-    }
-
-    const rawText = await file.text()
-    const text = rawText.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    const lines = text.split('\n').filter(line => line.trim())
-
-    if (lines.length < 2) {
-      return NextResponse.json({ error: 'CSV file is empty or has no data rows' }, { status: 400 })
-    }
-
-    const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase())
-    const format = detectCSVFormat(headers)
-
     await ensureOrganization(orgId)
 
-    let success = 0
-    let errors = 0
-    let duplicates = 0
-    const errorMessages: string[] = []
+    const contentType = request.headers.get('content-type') ?? ''
 
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        const row = parseCSVLine(lines[i])
-        const result = format === 'shop'
-          ? await processShopRow(row, headers, orgId, smsConsent)
-          : await processStandardRow(row, headers, orgId, smsConsent)
-
-        if (result === 'success') success++
-        else if (result === 'duplicate') duplicates++
-        else {
-          errors++
-          errorMessages.push(`Row ${i}: ${result}`)
-        }
-      } catch (err) {
-        errors++
-        errorMessages.push(`Row ${i}: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      }
+    if (contentType.includes('application/json')) {
+      return handleWizardImport(request, orgId)
     }
-
-    return NextResponse.json({
-      success,
-      errors,
-      duplicates,
-      format,
-      message: errors > 0
-        ? `Imported ${success} customers with ${errors} errors`
-        : `Successfully imported ${success} customers`,
-      details: errors > 0 ? errorMessages.slice(0, 10) : undefined,
-    })
+    return handleLegacyImport(request, orgId)
   } catch (error) {
     console.error('Error importing customers:', error)
     return NextResponse.json({ error: 'Failed to import customers' }, { status: 500 })
   }
 }
 
-function detectCSVFormat(headers: string[]): CSVFormat {
-  const shopIndicators = ['full name', 'vin code', 'year/make/model']
-  const hasShopHeaders = shopIndicators.some(h => headers.includes(h))
-  return hasShopHeaders ? 'shop' : 'standard'
-}
-
-function parseFullName(fullName: string): { firstName: string; lastName: string } {
-  const trimmed = fullName.trim()
-  const parts = trimmed.split(/\s+/)
-  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
-  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
-}
-
-function parseYearMakeModel(combined: string): { year: number; make: string; model: string } | null {
-  const trimmed = combined.trim()
-  if (!trimmed) return null
-
-  const parts = trimmed.split(/\s+/)
-  const year = parseInt(parts[0])
-  if (isNaN(year) || year < 1900 || year > 2100) return null
-  if (parts.length < 3) return null
-
-  return { year, make: parts[1], model: parts.slice(2).join(' ') }
-}
-
-function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '')
-  if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1)
-  return digits
-}
-
-function inferServiceType(description: string): string {
-  const lower = description.toLowerCase()
-  if (lower.includes('oil change') || lower.includes('oil filter') || lower.includes('5w')) {
-    return 'oil_change'
+async function handleWizardImport(request: NextRequest, orgId: string) {
+  const body = await request.json() as {
+    rows: Array<{ [key: string]: string }>
+    smsConsent: boolean
   }
-  if (lower.includes('tire rotation') || lower.includes('rotate')) return 'tire_rotation'
-  if (lower.includes('inspection')) return 'state_inspection'
-  if (lower.includes('brake')) return 'brake_service'
-  if (lower.includes('transmission')) return 'transmission'
-  return 'oil_change'
-}
 
-function getColValue(row: string[], headers: string[], colName: string): string {
-  const idx = headers.indexOf(colName)
-  return idx >= 0 ? (row[idx]?.trim() ?? '') : ''
-}
+  if (!body.rows?.length) {
+    return NextResponse.json({ error: 'No data to import' }, { status: 400 })
+  }
 
-async function processShopRow(
-  row: string[],
-  headers: string[],
-  orgId: string,
-  smsConsent: boolean
-): Promise<'success' | 'duplicate' | string> {
-  const rawPhone = getColValue(row, headers, 'phone')
-  if (!rawPhone) return 'Missing phone number'
+  const cleanedRows = rowsToCleanedImport(
+    body.rows.map(r => ({ cells: Object.fromEntries(Object.entries(r).map(([k, v]) => [k, { value: v }])) }))
+  )
 
-  const phone = normalizePhone(rawPhone)
-  if (phone.length < 10) return 'Invalid phone number'
+  let success = 0
+  let errors = 0
+  let duplicates = 0
+  const errorMessages: string[] = []
 
-  const existing = await prisma.customer.findFirst({
-    where: { orgId, phone },
+  for (let i = 0; i < cleanedRows.length; i++) {
+    try {
+      const result = await processImportRow(cleanedRows[i], orgId, body.smsConsent)
+      if (result === 'success') success++
+      else if (result === 'duplicate') duplicates++
+      else {
+        errors++
+        errorMessages.push(`Row ${i + 1}: ${result}`)
+      }
+    } catch (err) {
+      errors++
+      errorMessages.push(`Row ${i + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
+  return NextResponse.json({
+    success,
+    errors,
+    duplicates,
+    message: errors > 0
+      ? `Imported ${success} customers with ${errors} errors`
+      : `Successfully imported ${success} customers`,
+    details: errors > 0 ? errorMessages.slice(0, 10) : undefined,
   })
-  if (existing) return 'duplicate'
-
-  const fullNameRaw = getColValue(row, headers, 'full name')
-  const { firstName, lastName } = fullNameRaw
-    ? parseFullName(fullNameRaw)
-    : { firstName: 'Unknown', lastName: '' }
-
-  const email = getColValue(row, headers, 'email') || null
-  const ymm = getColValue(row, headers, 'year/make/model')
-  const vin = getColValue(row, headers, 'vin code') || null
-  const mileageStr = getColValue(row, headers, 'current milleage') || getColValue(row, headers, 'current mileage')
-  const mileage = mileageStr ? parseInt(mileageStr.replace(/\D/g, '')) : null
-  const repairDesc = getColValue(row, headers, 'repair description') || null
-
-  const vehicleInfo = ymm ? parseYearMakeModel(ymm) : null
-  const serviceType = repairDesc ? inferServiceType(repairDesc) : 'oil_change'
-  const serviceDate = new Date()
-
-  const customerData: Prisma.CustomerUncheckedCreateInput = {
-    firstName,
-    lastName,
-    phone,
-    email,
-    status: CustomerStatus.up_to_date,
-    orgId,
-    smsConsent,
-    smsConsentDate: smsConsent ? new Date() : null,
-  }
-
-  if (vehicleInfo) {
-    customerData.vehicles = {
-      create: [{
-        year: vehicleInfo.year,
-        make: vehicleInfo.make,
-        model: vehicleInfo.model,
-        vin,
-        licensePlate: null,
-        mileageAtLastService: mileage || null,
-        serviceRecords: mileage ? {
-          create: [{
-            serviceDate,
-            mileageAtService: mileage,
-            serviceType,
-            notes: repairDesc,
-            nextDueDate: calculateNextDueDate(serviceDate),
-            nextDueMileage: calculateNextDueMileage(mileage),
-          }],
-        } : undefined,
-      }],
-    }
-  }
-
-  try {
-    await prisma.customer.create({ data: customerData })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error'
-    return `Failed to save customer (phone: ${phone}): ${msg}`
-  }
-
-  if (smsConsent) {
-    const customer = await prisma.customer.findFirst({
-      where: { orgId, phone },
-      select: { id: true },
-    })
-    if (customer) {
-      await prisma.consentLog.create({
-        data: {
-          orgId,
-          customerId: customer.id,
-          action: 'opt_in',
-          source: 'csv_import',
-          performedBy: 'system',
-          notes: 'Consent granted during CSV import',
-        },
-      })
-    }
-  }
-
-  return 'success'
 }
 
-async function processStandardRow(
-  row: string[],
-  headers: string[],
-  orgId: string,
-  smsConsent: boolean
-): Promise<'success' | 'duplicate' | string> {
-  const colIndex = {
-    firstName: headers.indexOf('firstname'),
-    lastName: headers.indexOf('lastname'),
-    phone: headers.indexOf('phone'),
-    email: headers.indexOf('email'),
-    vehicleYear: headers.indexOf('vehicleyear'),
-    vehicleMake: headers.indexOf('vehiclemake'),
-    vehicleModel: headers.indexOf('vehiclemodel'),
-    licensePlate: headers.indexOf('licenseplate'),
-    lastServiceDate: headers.indexOf('lastservicedate'),
-    lastServiceMileage: headers.indexOf('lastservicemileage'),
+async function handleLegacyImport(request: NextRequest, orgId: string) {
+  const formData = await request.formData()
+  const file = formData.get('file') as File
+  const smsConsent = formData.get('smsConsent') === 'true'
+
+  if (!file) {
+    return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
   }
 
-  const firstName = row[colIndex.firstName]?.trim()
-  const lastName = row[colIndex.lastName]?.trim()
-  const rawPhone = row[colIndex.phone]?.trim()
-  const email = row[colIndex.email]?.trim() || null
+  const Papa = await import('papaparse')
+  const rawText = await file.text()
+  const result = Papa.default.parse<string[]>(rawText, { skipEmptyLines: true })
+  const rows = result.data
 
-  if (!firstName || !lastName || !rawPhone) return 'Missing required fields'
+  if (rows.length < 2) {
+    return NextResponse.json({ error: 'CSV file is empty or has no data rows' }, { status: 400 })
+  }
 
-  const phone = normalizePhone(rawPhone)
-  if (phone.length < 10) return 'Invalid phone number'
+  const headers = rows[0].map((h: string) => h.trim().toLowerCase())
+  const dataRows = rows.slice(1)
 
-  const existing = await prisma.customer.findFirst({
-    where: { orgId, phone },
+  // Build a simple mapping from header names to values
+  const cleanedRows = rowsToCleanedImport(
+    dataRows.map(row => {
+      const cells: Record<string, { value: string }> = {}
+      const get = (col: string) => {
+        const idx = headers.indexOf(col)
+        return idx >= 0 ? (row[idx]?.trim() ?? '') : ''
+      }
+
+      // Detect format
+      const isShop = headers.includes('full name') || headers.includes('year/make/model')
+
+      if (isShop) {
+        const fullName = get('full name')
+        const parts = fullName.split(/\s+/)
+        cells.firstName = { value: parts[0] || '' }
+        cells.lastName = { value: parts.slice(1).join(' ') || '' }
+
+        const phone = get('phone').replace(/\D/g, '')
+        cells.phone = { value: phone.length === 11 && phone.startsWith('1') ? phone.slice(1) : phone }
+        cells.email = { value: get('email') }
+
+        const ymm = get('year/make/model')
+        const ymmParts = ymm.split(/\s+/)
+        if (ymmParts.length >= 3) {
+          cells.vehicleYear = { value: ymmParts[0] }
+          cells.vehicleMake = { value: ymmParts[1] }
+          cells.vehicleModel = { value: ymmParts.slice(2).join(' ') }
+        }
+
+        cells.vin = { value: get('vin code') }
+        const mileage = get('current milleage') || get('current mileage')
+        cells.lastServiceMileage = { value: mileage.replace(/\D/g, '') }
+        cells.repairDescription = { value: get('repair description') }
+      } else {
+        const phone = get('phone').replace(/\D/g, '')
+        cells.firstName = { value: get('firstname') }
+        cells.lastName = { value: get('lastname') }
+        cells.phone = { value: phone.length === 11 && phone.startsWith('1') ? phone.slice(1) : phone }
+        cells.email = { value: get('email') }
+        cells.vehicleYear = { value: get('vehicleyear') }
+        cells.vehicleMake = { value: get('vehiclemake') }
+        cells.vehicleModel = { value: get('vehiclemodel') }
+        cells.licensePlate = { value: get('licenseplate') }
+        cells.lastServiceDate = { value: get('lastservicedate') }
+        cells.lastServiceMileage = { value: get('lastservicemileage') }
+      }
+      return { cells }
+    })
+  )
+
+  let success = 0
+  let errors = 0
+  let duplicates = 0
+  const errorMessages: string[] = []
+
+  for (let i = 0; i < cleanedRows.length; i++) {
+    try {
+      const res = await processImportRow(cleanedRows[i], orgId, smsConsent)
+      if (res === 'success') success++
+      else if (res === 'duplicate') duplicates++
+      else {
+        errors++
+        errorMessages.push(`Row ${i + 1}: ${res}`)
+      }
+    } catch (err) {
+      errors++
+      errorMessages.push(`Row ${i + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
+  const format = headers.includes('full name') || headers.includes('year/make/model') ? 'shop' : 'standard'
+
+  return NextResponse.json({
+    success,
+    errors,
+    duplicates,
+    format,
+    message: errors > 0
+      ? `Imported ${success} customers with ${errors} errors`
+      : `Successfully imported ${success} customers`,
+    details: errors > 0 ? errorMessages.slice(0, 10) : undefined,
   })
-  if (existing) return 'duplicate'
-
-  const vehicleYear = colIndex.vehicleYear >= 0 ? parseInt(row[colIndex.vehicleYear]) : null
-  const vehicleMake = colIndex.vehicleMake >= 0 ? row[colIndex.vehicleMake]?.trim() : null
-  const vehicleModel = colIndex.vehicleModel >= 0 ? row[colIndex.vehicleModel]?.trim() : null
-  const licensePlate = colIndex.licensePlate >= 0 ? row[colIndex.licensePlate]?.trim() : null
-  const lastServiceDate = colIndex.lastServiceDate >= 0 ? row[colIndex.lastServiceDate]?.trim() : null
-  const lastServiceMileage = colIndex.lastServiceMileage >= 0 ? parseInt(row[colIndex.lastServiceMileage]) : null
-
-  const customerData: Prisma.CustomerUncheckedCreateInput = {
-    firstName,
-    lastName,
-    phone,
-    email,
-    status: CustomerStatus.up_to_date,
-    orgId,
-    smsConsent,
-    smsConsentDate: smsConsent ? new Date() : null,
-  }
-
-  if (vehicleYear && vehicleMake && vehicleModel) {
-    customerData.vehicles = {
-      create: [{
-        year: vehicleYear,
-        make: vehicleMake,
-        model: vehicleModel,
-        licensePlate: licensePlate || null,
-        mileageAtLastService: lastServiceMileage || null,
-        serviceRecords: lastServiceDate && lastServiceMileage ? {
-          create: [{
-            serviceDate: new Date(lastServiceDate),
-            mileageAtService: lastServiceMileage,
-            serviceType: 'oil_change',
-            nextDueDate: calculateNextDueDate(new Date(lastServiceDate)),
-            nextDueMileage: calculateNextDueMileage(lastServiceMileage),
-          }],
-        } : undefined,
-      }],
-    }
-  }
-
-  try {
-    await prisma.customer.create({ data: customerData })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error'
-    return `Failed to save customer (phone: ${phone}): ${msg}`
-  }
-
-  if (smsConsent) {
-    const customer = await prisma.customer.findFirst({
-      where: { orgId, phone },
-      select: { id: true },
-    })
-    if (customer) {
-      await prisma.consentLog.create({
-        data: {
-          orgId,
-          customerId: customer.id,
-          action: 'opt_in',
-          source: 'csv_import',
-          performedBy: 'system',
-          notes: 'Consent granted during CSV import',
-        },
-      })
-    }
-  }
-
-  return 'success'
-}
-
-function parseCSVLine(line: string): string[] {
-  const result: string[] = []
-  let current = ''
-  let inQuotes = false
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i]
-
-    if (char === '"') {
-      inQuotes = !inQuotes
-    } else if (char === ',' && !inQuotes) {
-      result.push(current)
-      current = ''
-    } else {
-      current += char
-    }
-  }
-
-  result.push(current)
-  return result
 }
