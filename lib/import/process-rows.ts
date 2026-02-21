@@ -172,6 +172,7 @@ export async function processImportRow(
       .from('customers')
       .insert({
         org_id: orgId,
+        name: `${row.firstName} ${row.lastName || ''}`.trim(),
         first_name: row.firstName,
         last_name: row.lastName || '',
         phone: row.phone,

@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
       .from('customers')
       .insert({
         id: customerId,
+        name: `${data.firstName} ${data.lastName}`.trim(),
         first_name: data.firstName,
         last_name: data.lastName,
         phone: data.phone,
