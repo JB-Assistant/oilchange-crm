@@ -123,13 +123,34 @@ export async function createPlatformAdminClient() {
  */
 export async function resolveOrgId(clerkOrgId: string): Promise<string> {
   const platform = await createPlatformAdminClient()
-  const { data, error } = await platform
+
+  // Fast path: already provisioned
+  const { data: existing } = await platform
     .from('orgs')
     .select('id')
     .eq('clerk_org_id', clerkOrgId)
+    .maybeSingle()
+
+  if (existing) return existing.id
+
+  // Auto-provision: org exists in Clerk but not yet in Supabase (webhook missed or pre-migration org)
+  const { data: newOrg, error: orgError } = await platform
+    .from('orgs')
+    .insert({ name: clerkOrgId, slug: clerkOrgId, plan: 'trial', clerk_org_id: clerkOrgId })
+    .select('id')
     .single()
-  if (error || !data) throw new Error(`Org not provisioned for Clerk org: ${clerkOrgId}`)
-  return data.id
+
+  if (orgError || !newOrg) throw new Error(`Failed to auto-provision org: ${orgError?.message}`)
+
+  const db = await createProductAdminClient()
+  await db.from('shops').insert({
+    org_id: newOrg.id,
+    name: clerkOrgId,
+    subscription_status: 'trial',
+    subscription_tier: 'starter',
+  })
+
+  return newOrg.id
 }
 
 /**
