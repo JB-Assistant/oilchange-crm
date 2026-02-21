@@ -120,23 +120,50 @@ export default async function DashboardPage() {
   const { orgId: clerkOrgId } = await auth()
   if (!clerkOrgId) redirect('/')
 
-  const orgId = await resolveOrgId(clerkOrgId)
-  const db = await createProductAdminClient()
+  let hadLoadError = false
 
-  const [totalCustomers, overdueCount, dueNowCount, dueSoonCount, upToDateCount, recentFollowUps, upcomingServices] = await Promise.all([
-    countCustomers(db, orgId),
-    countCustomers(db, orgId, CustomerStatus.overdue),
-    countCustomers(db, orgId, CustomerStatus.due_now),
-    countCustomers(db, orgId, CustomerStatus.due_soon),
-    countCustomers(db, orgId, CustomerStatus.up_to_date),
-    countRecentFollowUps(db, orgId),
-    getUpcomingServices(db, orgId),
-  ])
+  let totalCustomers = 0
+  let overdueCount = 0
+  let dueNowCount = 0
+  let dueSoonCount = 0
+  let upToDateCount = 0
+  let recentFollowUps = 0
+  let upcomingServices: Awaited<ReturnType<typeof getUpcomingServices>> = []
+
+  try {
+    const db = await createProductAdminClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    ;[
+      totalCustomers,
+      overdueCount,
+      dueNowCount,
+      dueSoonCount,
+      upToDateCount,
+      recentFollowUps,
+      upcomingServices,
+    ] = await Promise.all([
+      countCustomers(db, orgId),
+      countCustomers(db, orgId, CustomerStatus.overdue),
+      countCustomers(db, orgId, CustomerStatus.due_now),
+      countCustomers(db, orgId, CustomerStatus.due_soon),
+      countCustomers(db, orgId, CustomerStatus.up_to_date),
+      countRecentFollowUps(db, orgId),
+      getUpcomingServices(db, orgId),
+    ])
+  } catch (error) {
+    hadLoadError = true
+    console.error('[dashboard/page] Failed to load dashboard data:', error)
+  }
 
   const conversionRate = totalCustomers > 0 ? Math.round((upToDateCount / totalCustomers) * 100) : 0
 
   return (
     <div className="space-y-8">
+      {hadLoadError && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm">
+          Dashboard data could not be loaded completely. Showing fallback values.
+        </div>
+      )}
       <div>
         <h1 className="font-heading text-3xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground mt-1">Overview of your customer service status</p>
