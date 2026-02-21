@@ -121,7 +121,7 @@ export async function processImportRow(
 
     // Add new vehicle to existing customer
     try {
-      const { data: newVehicle } = await db
+      const { data: newVehicle, error: vehicleError } = await db
         .from('vehicles')
         .insert({
           org_id: orgId,
@@ -137,6 +137,8 @@ export async function processImportRow(
         })
         .select('id')
         .single()
+
+      if (vehicleError) throw new Error(vehicleError.message)
 
       if (newVehicle && hasService) {
         await db.from('repair_orders').insert({
@@ -166,7 +168,7 @@ export async function processImportRow(
 
   // Create new customer
   try {
-    const { data: newCustomer } = await db
+    const { data: newCustomer, error: customerError } = await db
       .from('customers')
       .insert({
         org_id: orgId,
@@ -184,11 +186,12 @@ export async function processImportRow(
       .select('id')
       .single()
 
+    if (customerError) throw new Error(customerError.message)
     if (!newCustomer) throw new Error('Insert returned no data')
 
     if (hasVehicle) {
       const year = parseInt(row.vehicleYear)
-      const { data: newVehicle } = await db
+      const { data: newVehicle, error: vehicleError2 } = await db
         .from('vehicles')
         .insert({
           org_id: orgId,
@@ -204,6 +207,8 @@ export async function processImportRow(
         })
         .select('id')
         .single()
+
+      if (vehicleError2) throw new Error(vehicleError2.message)
 
       if (newVehicle && hasService) {
         await db.from('repair_orders').insert({
