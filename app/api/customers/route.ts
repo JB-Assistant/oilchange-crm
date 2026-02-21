@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
     if (data.vehicles.length > 0) {
       const vehicleRows = data.vehicles.map(vehicle => ({
         id: crypto.randomUUID(),
+        org_id: orgId,
         customer_id: customerId,
         year: vehicle.year,
         make: vehicle.make,

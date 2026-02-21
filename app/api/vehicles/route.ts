@@ -115,6 +115,7 @@ export async function POST(request: NextRequest) {
       .from('vehicles')
       .insert({
         id: crypto.randomUUID(),
+        org_id: orgId,
         customer_id: data.customerId,
         year: data.year,
         make: data.make,

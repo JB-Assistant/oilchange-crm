@@ -5,18 +5,18 @@ import { assertSupabaseError } from '@/lib/supabase/otto'
 import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 async function countCustomers(db: Awaited<ReturnType<typeof createProductAdminClient>>, orgId: string, status?: CustomerStatus): Promise<number> {
-  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('org_id', orgId)
+  let query = db.from('customers').select('id', { count: 'exact' }).eq('org_id', orgId)
   if (status) query = query.eq('status', status)
-  const { count, error } = await query
+  const { count, error } = await query.limit(1)
   assertSupabaseError(error, 'Failed to count customers')
   return count ?? 0
 }
 
 async function countFollowUps(db: Awaited<ReturnType<typeof createProductAdminClient>>, orgId: string, since?: string, outcome?: string): Promise<number> {
-  let query = db.from('follow_up_records').select('id', { count: 'exact', head: true }).eq('org_id', orgId)
+  let query = db.from('follow_up_records').select('id', { count: 'exact' }).eq('org_id', orgId)
   if (since) query = query.gte('contact_date', since)
   if (outcome) query = query.eq('outcome', outcome)
-  const { count, error } = await query
+  const { count, error } = await query.limit(1)
   assertSupabaseError(error, 'Failed to count follow-up records')
   return count ?? 0
 }

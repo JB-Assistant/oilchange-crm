@@ -49,6 +49,129 @@ ALTER TABLE otto.shops ADD COLUMN IF NOT EXISTS phone                 TEXT;
 -- Similarly for otto.customers, otto.vehicles, etc. if needed.
 
 -- ─────────────────────────────────────────────────────────────
+-- 0d. Legacy compatibility: otto.customers (setup.sql -> app schema)
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS first_name             TEXT;
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS last_name              TEXT;
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS status                 TEXT    DEFAULT 'up_to_date';
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS sms_consent            BOOLEAN DEFAULT FALSE;
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS sms_consent_date       TIMESTAMPTZ;
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS preferred_contact_time TEXT;
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS tags                   TEXT[]  DEFAULT '{}';
+ALTER TABLE otto.customers ADD COLUMN IF NOT EXISTS updated_at             TIMESTAMPTZ DEFAULT NOW();
+
+-- If older schema only had "name", split into first_name / last_name.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'customers' AND column_name = 'name'
+  ) THEN
+    UPDATE otto.customers
+    SET
+      first_name = COALESCE(first_name, split_part(COALESCE(name, ''), ' ', 1)),
+      last_name = COALESCE(
+        last_name,
+        CASE
+          WHEN POSITION(' ' IN COALESCE(name, '')) > 0
+            THEN ltrim(substring(COALESCE(name, '') FROM POSITION(' ' IN COALESCE(name, '')) + 1))
+          ELSE ''
+        END
+      )
+    WHERE first_name IS NULL OR last_name IS NULL;
+  END IF;
+END $$;
+
+UPDATE otto.customers SET first_name = 'Customer' WHERE COALESCE(first_name, '') = '';
+UPDATE otto.customers SET last_name = '' WHERE last_name IS NULL;
+UPDATE otto.customers SET status = 'up_to_date' WHERE status IS NULL;
+UPDATE otto.customers SET tags = '{}' WHERE tags IS NULL;
+UPDATE otto.customers SET updated_at = COALESCE(updated_at, created_at, NOW()) WHERE updated_at IS NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'customers' AND column_name = 'shop_id'
+  ) THEN
+    ALTER TABLE otto.customers ALTER COLUMN shop_id DROP NOT NULL;
+  END IF;
+END $$;
+
+-- ─────────────────────────────────────────────────────────────
+-- 0e. Legacy compatibility: otto.vehicles
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE otto.vehicles ADD COLUMN IF NOT EXISTS license_plate           TEXT;
+ALTER TABLE otto.vehicles ADD COLUMN IF NOT EXISTS mileage_at_last_service INT;
+ALTER TABLE otto.vehicles ADD COLUMN IF NOT EXISTS updated_at              TIMESTAMPTZ DEFAULT NOW();
+
+-- Preserve legacy data if old schema used "license".
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'vehicles' AND column_name = 'license'
+  ) THEN
+    UPDATE otto.vehicles
+    SET license_plate = COALESCE(license_plate, license)
+    WHERE license_plate IS NULL AND license IS NOT NULL;
+  END IF;
+END $$;
+
+UPDATE otto.vehicles SET updated_at = COALESCE(updated_at, created_at, NOW()) WHERE updated_at IS NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'vehicles' AND column_name = 'shop_id'
+  ) THEN
+    ALTER TABLE otto.vehicles ALTER COLUMN shop_id DROP NOT NULL;
+  END IF;
+END $$;
+
+-- ─────────────────────────────────────────────────────────────
+-- 0f. Legacy compatibility: otto.repair_orders
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS service_date       TIMESTAMPTZ;
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS service_type       TEXT;
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS mileage_at_service INT;
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS next_due_date      TIMESTAMPTZ;
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS next_due_mileage   INT;
+ALTER TABLE otto.repair_orders ADD COLUMN IF NOT EXISTS notes              TEXT;
+
+-- Default/fallback values for legacy rows.
+UPDATE otto.repair_orders SET service_date = COALESCE(service_date, created_at, NOW()) WHERE service_date IS NULL;
+UPDATE otto.repair_orders SET service_type = COALESCE(service_type, 'oil_change') WHERE service_type IS NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'repair_orders' AND column_name = 'description'
+  ) THEN
+    UPDATE otto.repair_orders
+    SET notes = COALESCE(notes, description)
+    WHERE notes IS NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'otto' AND table_name = 'repair_orders' AND column_name = 'shop_id'
+  ) THEN
+    ALTER TABLE otto.repair_orders ALTER COLUMN shop_id DROP NOT NULL;
+  END IF;
+END $$;
+
+-- ─────────────────────────────────────────────────────────────
 -- 1. otto.follow_up_records
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS otto.follow_up_records (
@@ -66,7 +189,8 @@ CREATE TABLE IF NOT EXISTS otto.follow_up_records (
 
 ALTER TABLE otto.follow_up_records ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.follow_up_records
+DROP POLICY IF EXISTS "org_access" ON otto.follow_up_records;
+CREATE POLICY "org_access" ON otto.follow_up_records
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.follow_up_records TO anon, authenticated, service_role;
@@ -91,7 +215,8 @@ CREATE TABLE IF NOT EXISTS otto.appointments (
 
 ALTER TABLE otto.appointments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.appointments
+DROP POLICY IF EXISTS "org_access" ON otto.appointments;
+CREATE POLICY "org_access" ON otto.appointments
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.appointments TO anon, authenticated, service_role;
@@ -113,15 +238,26 @@ CREATE TABLE IF NOT EXISTS otto.locations (
 
 ALTER TABLE otto.locations ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.locations
+DROP POLICY IF EXISTS "org_access" ON otto.locations;
+CREATE POLICY "org_access" ON otto.locations
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.locations TO anon, authenticated, service_role;
 
 -- Add FK from appointments to locations now that locations exists
-ALTER TABLE otto.appointments
-  ADD CONSTRAINT IF NOT EXISTS appointments_location_id_fkey
-  FOREIGN KEY (location_id) REFERENCES otto.locations(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'appointments_location_id_fkey'
+      AND conrelid = 'otto.appointments'::regclass
+  ) THEN
+    ALTER TABLE otto.appointments
+      ADD CONSTRAINT appointments_location_id_fkey
+      FOREIGN KEY (location_id) REFERENCES otto.locations(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- ─────────────────────────────────────────────────────────────
 -- 4. otto.service_types
@@ -146,7 +282,8 @@ CREATE TABLE IF NOT EXISTS otto.service_types (
 
 ALTER TABLE otto.service_types ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.service_types
+DROP POLICY IF EXISTS "org_access" ON otto.service_types;
+CREATE POLICY "org_access" ON otto.service_types
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.service_types TO anon, authenticated, service_role;
@@ -166,7 +303,8 @@ CREATE TABLE IF NOT EXISTS otto.reminder_templates (
 
 ALTER TABLE otto.reminder_templates ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.reminder_templates
+DROP POLICY IF EXISTS "org_access" ON otto.reminder_templates;
+CREATE POLICY "org_access" ON otto.reminder_templates
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.reminder_templates TO anon, authenticated, service_role;
@@ -188,7 +326,8 @@ CREATE TABLE IF NOT EXISTS otto.reminder_rules (
 
 ALTER TABLE otto.reminder_rules ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.reminder_rules
+DROP POLICY IF EXISTS "org_access" ON otto.reminder_rules;
+CREATE POLICY "org_access" ON otto.reminder_rules
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.reminder_rules TO anon, authenticated, service_role;
@@ -219,7 +358,8 @@ CREATE TABLE IF NOT EXISTS otto.reminder_messages (
 
 ALTER TABLE otto.reminder_messages ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.reminder_messages
+DROP POLICY IF EXISTS "org_access" ON otto.reminder_messages;
+CREATE POLICY "org_access" ON otto.reminder_messages
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.reminder_messages TO anon, authenticated, service_role;
@@ -240,7 +380,8 @@ CREATE TABLE IF NOT EXISTS otto.consent_logs (
 
 ALTER TABLE otto.consent_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.consent_logs
+DROP POLICY IF EXISTS "org_access" ON otto.consent_logs;
+CREATE POLICY "org_access" ON otto.consent_logs
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.consent_logs TO anon, authenticated, service_role;
@@ -261,7 +402,8 @@ CREATE TABLE IF NOT EXISTS otto.twilio_configs (
 
 ALTER TABLE otto.twilio_configs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.twilio_configs
+DROP POLICY IF EXISTS "org_access" ON otto.twilio_configs;
+CREATE POLICY "org_access" ON otto.twilio_configs
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.twilio_configs TO anon, authenticated, service_role;
@@ -282,7 +424,8 @@ CREATE TABLE IF NOT EXISTS otto.ai_configs (
 
 ALTER TABLE otto.ai_configs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.ai_configs
+DROP POLICY IF EXISTS "org_access" ON otto.ai_configs;
+CREATE POLICY "org_access" ON otto.ai_configs
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.ai_configs TO anon, authenticated, service_role;
@@ -301,7 +444,8 @@ CREATE TABLE IF NOT EXISTS otto.customer_notes (
 
 ALTER TABLE otto.customer_notes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "org_access" ON otto.customer_notes
+DROP POLICY IF EXISTS "org_access" ON otto.customer_notes;
+CREATE POLICY "org_access" ON otto.customer_notes
   USING (public.is_org_member(org_id));
 
 GRANT ALL ON otto.customer_notes TO anon, authenticated, service_role;

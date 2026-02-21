@@ -90,6 +90,7 @@ export async function processImportRow(
         if (!alreadyHasRecord) {
           try {
             await db.from('repair_orders').insert({
+              org_id: orgId,
               vehicle_id: matchedVehicle.id,
               service_date: serviceDate!.toISOString(),
               mileage_at_service: mileage!,
@@ -123,6 +124,7 @@ export async function processImportRow(
       const { data: newVehicle } = await db
         .from('vehicles')
         .insert({
+          org_id: orgId,
           customer_id: existing.id,
           year: importYear,
           make: row.vehicleMake,
@@ -138,6 +140,7 @@ export async function processImportRow(
 
       if (newVehicle && hasService) {
         await db.from('repair_orders').insert({
+          org_id: orgId,
           vehicle_id: newVehicle.id,
           service_date: serviceDate!.toISOString(),
           mileage_at_service: mileage!,
@@ -188,6 +191,7 @@ export async function processImportRow(
       const { data: newVehicle } = await db
         .from('vehicles')
         .insert({
+          org_id: orgId,
           customer_id: newCustomer.id,
           year,
           make: row.vehicleMake,
@@ -203,6 +207,7 @@ export async function processImportRow(
 
       if (newVehicle && hasService) {
         await db.from('repair_orders').insert({
+          org_id: orgId,
           vehicle_id: newVehicle.id,
           service_date: serviceDate!.toISOString(),
           mileage_at_service: mileage!,

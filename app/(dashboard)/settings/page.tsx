@@ -38,8 +38,9 @@ export default async function SettingsPage() {
       .maybeSingle(),
     db
       .from('customers')
-      .select('id', { count: 'exact', head: true })
-      .eq('org_id', orgId),
+      .select('id', { count: 'exact' })
+      .eq('org_id', orgId)
+      .limit(1),
   ])
 
   assertSupabaseError(shopRes.error, 'Failed to fetch organization settings')

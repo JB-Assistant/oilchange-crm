@@ -15,6 +15,7 @@
 // ============================================================
 
 import { createServerClient } from '@supabase/ssr'
+import { type PostgrestError } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 
 // ─── SET THIS PER APP ────────────────────────────────────────
@@ -110,12 +111,40 @@ export async function createPlatformAdminClient() {
 // Server-side platform helpers
 // ─────────────────────────────────────────
 
+type PlatformAdminClient = Awaited<ReturnType<typeof createPlatformAdminClient>>
+
+function isMissingClerkOrgIdColumn(error: PostgrestError | null): boolean {
+  if (!error) return false
+  const haystack = `${error.message ?? ''} ${error.details ?? ''} ${error.hint ?? ''}`.toLowerCase()
+  return (
+    /could not find.+clerk_org_id.+column/.test(haystack) ||
+    /clerk_org_id.*does not exist/.test(haystack)
+  )
+}
+
+function isUniqueViolation(error: PostgrestError | null): boolean {
+  return error?.code === '23505'
+}
+
+async function findOrgBySlug(platform: PlatformAdminClient, slug: string) {
+  const { data, error } = await platform
+    .from('orgs')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle()
+
+  if (error) throw new Error(`Failed to resolve org by slug fallback: ${error.message}`)
+  return data
+}
+
 /**
  * Resolve the Supabase UUID org_id from a Clerk org ID string.
  * Call this at the top of every Server Component and API route
  * that needs to query product data (otto schema).
  *
- * Requires: public.orgs.clerk_org_id column (Phase 0 migration).
+ * Uses public.orgs.clerk_org_id when available.
+ * Falls back to slug-based lookup in legacy schemas where that column
+ * hasn't been applied yet.
  *
  * Usage:
  *   const { orgId: clerkOrgId } = await auth()
@@ -124,31 +153,76 @@ export async function createPlatformAdminClient() {
 export async function resolveOrgId(clerkOrgId: string): Promise<string> {
   const platform = await createPlatformAdminClient()
 
-  // Fast path: already provisioned
-  const { data: existing } = await platform
+  // Fast path: already provisioned via Clerk bridge column
+  const { data: existing, error: existingError } = await platform
     .from('orgs')
     .select('id')
     .eq('clerk_org_id', clerkOrgId)
     .maybeSingle()
 
+  const canUseClerkBridge = !isMissingClerkOrgIdColumn(existingError)
+
+  if (existingError && canUseClerkBridge) {
+    throw new Error(`Failed to resolve org: ${existingError.message}`)
+  }
+
   if (existing) return existing.id
 
-  // Auto-provision: org exists in Clerk but not yet in Supabase (webhook missed or pre-migration org)
-  const { data: newOrg, error: orgError } = await platform
+  // Legacy fallback when clerk_org_id column is unavailable.
+  if (!canUseClerkBridge) {
+    const legacyOrg = await findOrgBySlug(platform, clerkOrgId)
+    if (legacyOrg) return legacyOrg.id
+  }
+
+  // Auto-provision: org exists in Clerk but not yet in Supabase
+  const baseOrg = { name: clerkOrgId, slug: clerkOrgId, plan: 'trial' as const }
+  const insertPayload = canUseClerkBridge
+    ? { ...baseOrg, clerk_org_id: clerkOrgId }
+    : baseOrg
+
+  let { data: newOrg, error: orgError } = await platform
     .from('orgs')
-    .insert({ name: clerkOrgId, slug: clerkOrgId, plan: 'trial', clerk_org_id: clerkOrgId })
+    .insert(insertPayload)
     .select('id')
     .single()
+
+  // PostgREST schema cache can be stale even when migrations were run.
+  // Retry once without the bridge column so users can continue.
+  if (canUseClerkBridge && isMissingClerkOrgIdColumn(orgError)) {
+    const retry = await platform
+      .from('orgs')
+      .insert(baseOrg)
+      .select('id')
+      .single()
+
+    newOrg = retry.data
+    orgError = retry.error
+  }
+
+  if (isUniqueViolation(orgError)) {
+    const existingBySlug = await findOrgBySlug(platform, clerkOrgId)
+    if (existingBySlug) {
+      newOrg = existingBySlug
+      orgError = null
+    }
+  }
 
   if (orgError || !newOrg) throw new Error(`Failed to auto-provision org: ${orgError?.message}`)
 
   const db = await createProductAdminClient()
-  await db.from('shops').insert({
-    org_id: newOrg.id,
-    name: clerkOrgId,
-    subscription_status: 'trial',
-    subscription_tier: 'starter',
-  })
+  const { error: shopError } = await db
+    .from('shops')
+    .upsert(
+      {
+        org_id: newOrg.id,
+        name: clerkOrgId,
+        subscription_status: 'trial',
+        subscription_tier: 'starter',
+      },
+      { onConflict: 'org_id' }
+    )
+
+  if (shopError) throw new Error(`Failed to provision shop: ${shopError.message}`)
 
   return newOrg.id
 }

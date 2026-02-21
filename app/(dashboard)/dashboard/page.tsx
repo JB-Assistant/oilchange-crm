@@ -36,9 +36,9 @@ interface ServiceRow {
 }
 
 async function countCustomers(db: DbClient, orgId: string, status?: CustomerStatus): Promise<number> {
-  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('org_id', orgId)
+  let query = db.from('customers').select('id', { count: 'exact' }).eq('org_id', orgId)
   if (status) query = query.eq('status', status)
-  const { count, error } = await query
+  const { count, error } = await query.limit(1)
   assertSupabaseError(error, 'Failed to count customers')
   return count ?? 0
 }
@@ -47,9 +47,10 @@ async function countRecentFollowUps(db: DbClient, orgId: string): Promise<number
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { count, error } = await db
     .from('follow_up_records')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('org_id', orgId)
     .gte('contact_date', since)
+    .limit(1)
   assertSupabaseError(error, 'Failed to count recent follow-ups')
   return count ?? 0
 }

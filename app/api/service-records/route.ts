@@ -128,6 +128,7 @@ export async function POST(request: NextRequest) {
       .from('repair_orders')
       .insert({
         id: crypto.randomUUID(),
+        org_id: orgId,
         vehicle_id: vehicleId,
         service_date: serviceDateObj.toISOString(),
         mileage_at_service: mileageAtService,

@@ -105,8 +105,9 @@ async function ensureServiceTypes(orgId: string, db: Awaited<ReturnType<typeof c
 async function ensureTemplates(orgId: string, db: Awaited<ReturnType<typeof createProductAdminClient>>) {
   const { count } = await db
     .from('reminder_templates')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('org_id', orgId)
+    .limit(1)
 
   if (count && count > 0) {
     const { data } = await db.from('reminder_templates').select('id').eq('org_id', orgId)
@@ -131,8 +132,9 @@ async function ensureReminderRules(
 ) {
   const { count } = await db
     .from('reminder_rules')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('org_id', orgId)
+    .limit(1)
 
   if (count && count > 0) return
 

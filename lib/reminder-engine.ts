@@ -143,12 +143,13 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
 
           const { count } = await db
             .from('reminder_messages')
-            .select('id', { count: 'exact', head: true })
+            .select('id', { count: 'exact' })
             .eq('customer_id', customer.id)
             .eq('vehicle_id', vehicle.id)
             .eq('repair_order_id', latestOrder.id)
             .eq('rule_id', rule.id)
             .in('status', ['queued', 'sent', 'delivered'])
+            .limit(1)
 
           if (count && count > 0) continue
 

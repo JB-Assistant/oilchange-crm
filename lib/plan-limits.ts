@@ -22,8 +22,9 @@ export async function checkCustomerLimit(orgId: string): Promise<LimitCheck> {
 
   const { count } = await db
     .from('customers')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('org_id', orgId)
+    .limit(1)
 
   const current = count ?? 0
 
@@ -57,11 +58,12 @@ export async function checkSmsLimit(orgId: string): Promise<LimitCheck> {
 
   const { count } = await db
     .from('reminder_messages')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('org_id', orgId)
     .eq('direction', 'outbound')
     .gte('created_at', startOfMonth.toISOString())
     .in('status', ['sent', 'delivered', 'queued'])
+    .limit(1)
 
   const current = count ?? 0
 
