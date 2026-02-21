@@ -1,7 +1,26 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+async function countCustomers(orgId: string, status?: CustomerStatus): Promise<number> {
+  const db = getOttoClient()
+  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('orgId', orgId)
+  if (status) query = query.eq('status', status)
+  const { count, error } = await query
+  assertSupabaseError(error, 'Failed to count customers')
+  return count ?? 0
+}
+
+async function countFollowUps(orgId: string, since?: string, outcome?: string): Promise<number> {
+  const db = getOttoClient()
+  let query = db.from('follow_up_records').select('id', { count: 'exact', head: true }).eq('orgId', orgId)
+  if (since) query = query.gte('contactDate', since)
+  if (outcome) query = query.eq('outcome', outcome)
+  const { count, error } = await query
+  assertSupabaseError(error, 'Failed to count follow-up records')
+  return count ?? 0
+}
 
 export async function GET() {
   try {
@@ -10,6 +29,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const recentFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     const [
       totalCustomers,
       overdueCount,
@@ -17,32 +37,21 @@ export async function GET() {
       dueSoonCount,
       upToDateCount,
       recentFollowUps,
-      totalFollowUps
+      totalFollowUps,
+      scheduledCount,
     ] = await Promise.all([
-      prisma.customer.count({ where: { orgId } }),
-      prisma.customer.count({ where: { orgId, status: CustomerStatus.overdue } }),
-      prisma.customer.count({ where: { orgId, status: CustomerStatus.due_now } }),
-      prisma.customer.count({ where: { orgId, status: CustomerStatus.due_soon } }),
-      prisma.customer.count({ where: { orgId, status: CustomerStatus.up_to_date } }),
-      prisma.followUpRecord.count({ 
-        where: { 
-          orgId,
-          contactDate: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-        } 
-      }),
-      prisma.followUpRecord.count({ where: { orgId } })
+      countCustomers(orgId),
+      countCustomers(orgId, CustomerStatus.overdue),
+      countCustomers(orgId, CustomerStatus.due_now),
+      countCustomers(orgId, CustomerStatus.due_soon),
+      countCustomers(orgId, CustomerStatus.up_to_date),
+      countFollowUps(orgId, recentFrom),
+      countFollowUps(orgId),
+      countFollowUps(orgId, undefined, 'scheduled'),
     ])
 
-    // Calculate conversion rate (customers who scheduled after follow-up)
-    const scheduledCount = await prisma.followUpRecord.count({
-      where: {
-        orgId,
-        outcome: 'scheduled'
-      }
-    })
-
-    const conversionRate = totalFollowUps > 0 
-      ? Math.round((scheduledCount / totalFollowUps) * 100) 
+    const conversionRate = totalFollowUps > 0
+      ? Math.round((scheduledCount / totalFollowUps) * 100)
       : 0
 
     return NextResponse.json({
@@ -52,7 +61,7 @@ export async function GET() {
       dueSoon: dueSoonCount,
       upToDate: upToDateCount,
       recentFollowUps,
-      conversionRate
+      conversionRate,
     })
   } catch (error) {
     console.error('Error fetching dashboard stats:', error)

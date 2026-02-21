@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 import Link from 'next/link'
 import { ArrowLeft, Phone, MessageSquare } from 'lucide-react'
 import { useRouter } from 'next/navigation'

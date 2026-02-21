@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { StatusBadge } from '@/components/status-badge'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 import Link from 'next/link'
 
 interface StatusCardProps {

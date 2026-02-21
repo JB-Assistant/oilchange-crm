@@ -1,37 +1,133 @@
 export const dynamic = 'force-dynamic'
+
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { prisma } from '@/lib/prisma'
-import { CustomerStatus } from '@prisma/client'
 import { Users, AlertCircle, Clock, TrendingUp } from 'lucide-react'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { StatusCard } from '@/components/dashboard/status-card'
 import { UpcomingServices } from '@/components/dashboard/upcoming-services'
 import { QuickActions } from '@/components/dashboard/quick-actions'
 import { DashboardCharts } from '@/components/dashboard/dashboard-charts'
+import { CustomerStatus } from '@/lib/db/enums'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+interface CustomerRow {
+  id: string
+  firstName: string
+  lastName: string
+}
+
+interface VehicleRow {
+  id: string
+  customerId: string
+  year: number
+  make: string
+  model: string
+}
+
+interface ServiceRow {
+  id: string
+  vehicleId: string
+  nextDueDate: string
+  nextDueMileage: number
+}
+
+async function countCustomers(orgId: string, status?: CustomerStatus): Promise<number> {
+  const db = getOttoClient()
+  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('orgId', orgId)
+  if (status) query = query.eq('status', status)
+  const { count, error } = await query
+  assertSupabaseError(error, 'Failed to count customers')
+  return count ?? 0
+}
+
+async function countRecentFollowUps(orgId: string): Promise<number> {
+  const db = getOttoClient()
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const { count, error } = await db
+    .from('follow_up_records')
+    .select('id', { count: 'exact', head: true })
+    .eq('orgId', orgId)
+    .gte('contactDate', since)
+  assertSupabaseError(error, 'Failed to count recent follow-ups')
+  return count ?? 0
+}
+
+async function getUpcomingServices(orgId: string) {
+  const db = getOttoClient()
+
+  const { data: customerRows, error: customerError } = await db
+    .from('customers')
+    .select('id, firstName, lastName')
+    .eq('orgId', orgId)
+
+  assertSupabaseError(customerError, 'Failed to fetch customers for upcoming services')
+  const customers = (customerRows ?? []) as CustomerRow[]
+  if (customers.length === 0) return []
+
+  const customerIds = customers.map((c) => c.id)
+  const { data: vehicleRows, error: vehicleError } = await db
+    .from('vehicles')
+    .select('id, customerId, year, make, model')
+    .in('customerId', customerIds)
+
+  assertSupabaseError(vehicleError, 'Failed to fetch vehicles for upcoming services')
+  const vehicles = (vehicleRows ?? []) as VehicleRow[]
+  if (vehicles.length === 0) return []
+
+  const vehicleIds = vehicles.map((v) => v.id)
+  const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  const { data: serviceRows, error: serviceError } = await db
+    .from('service_records')
+    .select('id, vehicleId, nextDueDate, nextDueMileage')
+    .in('vehicleId', vehicleIds)
+    .lte('nextDueDate', nextMonth)
+    .order('nextDueDate', { ascending: true })
+    .limit(20)
+
+  assertSupabaseError(serviceError, 'Failed to fetch upcoming services')
+  const services = (serviceRows ?? []) as ServiceRow[]
+
+  const customerById = new Map(customers.map((c) => [c.id, c]))
+  const vehicleById = new Map(vehicles.map((v) => [v.id, v]))
+
+  return services
+    .flatMap((service) => {
+      const vehicle = vehicleById.get(service.vehicleId)
+      if (!vehicle) return []
+      const customer = customerById.get(vehicle.customerId)
+      if (!customer) return []
+
+      return [{
+        id: service.id,
+        nextDueDate: new Date(service.nextDueDate),
+        nextDueMileage: service.nextDueMileage,
+        vehicle: {
+          year: vehicle.year,
+          make: vehicle.make,
+          model: vehicle.model,
+          customer: {
+            firstName: customer.firstName,
+            lastName: customer.lastName,
+          },
+        },
+      }]
+    })
+    .slice(0, 5)
+}
 
 export default async function DashboardPage() {
   const { orgId } = await auth()
   if (!orgId) redirect('/')
 
   const [totalCustomers, overdueCount, dueNowCount, dueSoonCount, upToDateCount, recentFollowUps, upcomingServices] = await Promise.all([
-    prisma.customer.count({ where: { orgId } }),
-    prisma.customer.count({ where: { orgId, status: CustomerStatus.overdue } }),
-    prisma.customer.count({ where: { orgId, status: CustomerStatus.due_now } }),
-    prisma.customer.count({ where: { orgId, status: CustomerStatus.due_soon } }),
-    prisma.customer.count({ where: { orgId, status: CustomerStatus.up_to_date } }),
-    prisma.followUpRecord.count({
-      where: { orgId, contactDate: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
-    }),
-    prisma.serviceRecord.findMany({
-      where: {
-        vehicle: { customer: { orgId } },
-        nextDueDate: { lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }
-      },
-      include: { vehicle: { include: { customer: true } } },
-      orderBy: { nextDueDate: 'asc' },
-      take: 5
-    })
+    countCustomers(orgId),
+    countCustomers(orgId, CustomerStatus.overdue),
+    countCustomers(orgId, CustomerStatus.due_now),
+    countCustomers(orgId, CustomerStatus.due_soon),
+    countCustomers(orgId, CustomerStatus.up_to_date),
+    countRecentFollowUps(orgId),
+    getUpcomingServices(orgId),
   ])
 
   const conversionRate = totalCustomers > 0 ? Math.round((upToDateCount / totalCustomers) * 100) : 0

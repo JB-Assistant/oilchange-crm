@@ -1,9 +1,22 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+async function verifyCustomerInOrg(customerId: string, orgId: string) {
+  const db = getOttoClient()
+  const customerRes = await db
+    .from('customers')
+    .select('id')
+    .eq('id', customerId)
+    .eq('orgId', orgId)
+    .maybeSingle()
+
+  assertSupabaseError(customerRes.error, 'Failed to verify customer access')
+  return Boolean(customerRes.data)
+}
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -13,21 +26,20 @@ export async function GET(
     }
 
     const { id } = await params
-
-    // Verify customer belongs to this org
-    const customer = await prisma.customer.findFirst({
-      where: { id, orgId },
-    })
-    if (!customer) {
+    const customerExists = await verifyCustomerInOrg(id, orgId)
+    if (!customerExists) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
-    const notes = await prisma.customerNote.findMany({
-      where: { customerId: id },
-      orderBy: { createdAt: 'desc' },
-    })
+    const db = getOttoClient()
+    const notesRes = await db
+      .from('customer_notes')
+      .select('*')
+      .eq('customerId', id)
+      .order('createdAt', { ascending: false })
 
-    return NextResponse.json(notes)
+    assertSupabaseError(notesRes.error, 'Failed to fetch customer notes')
+    return NextResponse.json(notesRes.data ?? [])
   } catch (error) {
     console.error('Error fetching notes:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -51,23 +63,27 @@ export async function POST(
       return NextResponse.json({ error: 'Note body is required' }, { status: 400 })
     }
 
-    // Verify customer belongs to this org
-    const customer = await prisma.customer.findFirst({
-      where: { id, orgId },
-    })
-    if (!customer) {
+    const customerExists = await verifyCustomerInOrg(id, orgId)
+    if (!customerExists) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
-    const note = await prisma.customerNote.create({
-      data: {
+    const db = getOttoClient()
+    const now = new Date().toISOString()
+    const noteRes = await db
+      .from('customer_notes')
+      .insert({
+        id: crypto.randomUUID(),
         customerId: id,
         body: body.trim(),
         createdBy: userId,
-      },
-    })
+        createdAt: now,
+      })
+      .select('*')
+      .single()
 
-    return NextResponse.json(note, { status: 201 })
+    assertSupabaseError(noteRes.error, 'Failed to create customer note')
+    return NextResponse.json(noteRes.data, { status: 201 })
   } catch (error) {
     console.error('Error creating note:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

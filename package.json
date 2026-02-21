@@ -17,11 +17,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "@clerk/nextjs": "^6.37.3",
     "@neondatabase/serverless": "^1.0.2",
     "@prisma/client": "^5.22.0",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@stripe/stripe-js": "^8.7.0",
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.97.0",
     "@types/papaparse": "^5.5.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

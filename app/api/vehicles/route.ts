@@ -1,9 +1,30 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@prisma/client'
 import { createVehicleSchema } from '@/lib/validations'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
 import { ZodError } from 'zod'
+
+interface VehicleRow {
+  id: string
+  customerId: string
+  year: number
+  make: string
+  model: string
+  createdAt: string
+}
+
+interface CustomerRow {
+  id: string
+  firstName: string
+  lastName: string
+  phone: string
+}
+
+interface ServiceRow {
+  id: string
+  vehicleId: string
+  serviceDate: string
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,36 +33,62 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const { searchParams } = new URL(request.url)
     const customerId = searchParams.get('customerId')
 
-    const where: Prisma.VehicleWhereInput = {
-      customer: { orgId }
-    }
+    let customersQuery = db
+      .from('customers')
+      .select('id, firstName, lastName, phone')
+      .eq('orgId', orgId)
 
     if (customerId) {
-      where.customerId = customerId
+      customersQuery = customersQuery.eq('id', customerId)
     }
 
-    const vehicles = await prisma.vehicle.findMany({
-      where,
-      include: {
-        customer: {
-          select: {
-            firstName: true,
-            lastName: true,
-            phone: true
-          }
-        },
-        serviceRecords: {
-          orderBy: { serviceDate: 'desc' },
-          take: 1
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    })
+    const customersRes = await customersQuery
+    assertSupabaseError(customersRes.error, 'Failed to fetch customers for vehicles')
+    const customers = (customersRes.data ?? []) as CustomerRow[]
+    const customerIds = customers.map((customer) => customer.id)
 
-    return NextResponse.json(vehicles)
+    if (customerIds.length === 0) {
+      return NextResponse.json([])
+    }
+
+    const vehiclesRes = await db
+      .from('vehicles')
+      .select('*')
+      .in('customerId', customerIds)
+      .order('createdAt', { ascending: false })
+
+    assertSupabaseError(vehiclesRes.error, 'Failed to fetch vehicles')
+    const vehicles = (vehiclesRes.data ?? []) as VehicleRow[]
+    const vehicleIds = vehicles.map((vehicle) => vehicle.id)
+
+    const latestServiceByVehicle = new Map<string, ServiceRow>()
+    if (vehicleIds.length > 0) {
+      const servicesRes = await db
+        .from('service_records')
+        .select('id, vehicleId, serviceDate')
+        .in('vehicleId', vehicleIds)
+        .order('serviceDate', { ascending: false })
+      assertSupabaseError(servicesRes.error, 'Failed to fetch vehicle service records')
+
+      for (const row of (servicesRes.data ?? []) as ServiceRow[]) {
+        if (!latestServiceByVehicle.has(row.vehicleId)) {
+          latestServiceByVehicle.set(row.vehicleId, row)
+        }
+      }
+    }
+
+    const customerById = new Map(customers.map((customer) => [customer.id, customer]))
+    const hydratedVehicles = vehicles.map((vehicle) => ({
+      ...vehicle,
+      customer: customerById.get(vehicle.customerId) ?? null,
+      serviceRecords: latestServiceByVehicle.has(vehicle.id) ? [latestServiceByVehicle.get(vehicle.id)] : [],
+    }))
+
+    return NextResponse.json(hydratedVehicles)
   } catch (error) {
     console.error('Error fetching vehicles:', error)
     return NextResponse.json({ error: 'Failed to fetch vehicles' }, { status: 500 })
@@ -55,29 +102,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const body = await request.json()
     const data = createVehicleSchema.parse(body)
 
-    // Verify customer belongs to this org
-    const customer = await prisma.customer.findFirst({
-      where: { id: data.customerId, orgId }
-    })
+    const customerRes = await db
+      .from('customers')
+      .select('id')
+      .eq('id', data.customerId)
+      .eq('orgId', orgId)
+      .maybeSingle()
+    assertSupabaseError(customerRes.error, 'Failed to verify vehicle customer')
 
-    if (!customer) {
+    if (!customerRes.data) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
-    const vehicle = await prisma.vehicle.create({
-      data: {
+    const now = new Date().toISOString()
+    const vehicleRes = await db
+      .from('vehicles')
+      .insert({
+        id: crypto.randomUUID(),
         customerId: data.customerId,
         year: data.year,
         make: data.make,
         model: data.model,
-        licensePlate: data.licensePlate || null
-      }
-    })
+        licensePlate: data.licensePlate || null,
+        vin: data.vin || null,
+        mileageAtLastService: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .select('*')
+      .single()
 
-    return NextResponse.json(vehicle, { status: 201 })
+    assertSupabaseError(vehicleRes.error, 'Failed to create vehicle')
+    return NextResponse.json(vehicleRes.data, { status: 201 })
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
@@ -94,6 +154,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
@@ -101,21 +162,34 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Vehicle ID required' }, { status: 400 })
     }
 
-    // Verify vehicle belongs to this org
-    const vehicle = await prisma.vehicle.findFirst({
-      where: {
-        id,
-        customer: { orgId }
-      }
-    })
+    const vehicleRes = await db
+      .from('vehicles')
+      .select('id, customerId')
+      .eq('id', id)
+      .maybeSingle()
+    assertSupabaseError(vehicleRes.error, 'Failed to fetch vehicle for delete')
 
-    if (!vehicle) {
+    if (!vehicleRes.data) {
       return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
     }
 
-    await prisma.vehicle.delete({
-      where: { id }
-    })
+    const customerRes = await db
+      .from('customers')
+      .select('id')
+      .eq('id', vehicleRes.data.customerId as string)
+      .eq('orgId', orgId)
+      .maybeSingle()
+    assertSupabaseError(customerRes.error, 'Failed to verify vehicle ownership')
+
+    if (!customerRes.data) {
+      return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
+    }
+
+    const deleteRes = await db
+      .from('vehicles')
+      .delete()
+      .eq('id', id)
+    assertSupabaseError(deleteRes.error, 'Failed to delete vehicle')
 
     return NextResponse.json({ success: true })
   } catch (error) {

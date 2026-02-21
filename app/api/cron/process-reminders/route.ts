@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
         orgId: org.id,
         orgName: org.name,
         remindersQueued: result.queued,
+        aiGenerated: result.aiGenerated,
         errors: result.errors,
       });
     }

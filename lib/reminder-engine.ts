@@ -1,8 +1,11 @@
 import { prisma } from './prisma'
 import { renderTemplate, DEFAULT_TEMPLATES } from './template-engine'
+import { generateAIMessage, isAIAvailable, type OrgAiConfig } from './ai-sms'
+import { decrypt, isEncrypted } from './crypto'
 
 interface EvaluationResult {
   queued: number
+  aiGenerated: number
   errors: string[]
 }
 
@@ -13,11 +16,23 @@ interface OrgInput {
   reminderEnabled: boolean
   reminderQuietStart: number
   reminderQuietEnd: number
+  aiPersonalization: boolean
+  aiTone: string
 }
 
 export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult> {
   let queued = 0
+  let aiGenerated = 0
   const errors: string[] = []
+  // Load org-level AI config if available
+  let orgAiConfig: OrgAiConfig | undefined
+  const aiConfigRow = await prisma.aiConfig.findUnique({ where: { orgId: org.clerkOrgId } })
+  if (aiConfigRow?.isActive) {
+    const rawKey = isEncrypted(aiConfigRow.apiKey) ? decrypt(aiConfigRow.apiKey) : aiConfigRow.apiKey
+    orgAiConfig = { provider: aiConfigRow.provider, model: aiConfigRow.model, apiKey: rawKey }
+  }
+
+  const useAI = org.aiPersonalization && isAIAvailable(orgAiConfig)
 
   try {
     // 1. Check quiet hours
@@ -27,7 +42,7 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
       : hour >= org.reminderQuietStart && hour < org.reminderQuietEnd
 
     if (isQuietHours) {
-      return { queued: 0, errors: ['Quiet hours - skipping evaluation'] }
+      return { queued: 0, aiGenerated: 0, errors: ['Quiet hours - skipping evaluation'] }
     }
 
     // 2. Verify Twilio is configured and active
@@ -36,7 +51,7 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
     })
 
     if (!twilioConfig || !twilioConfig.isActive) {
-      return { queued: 0, errors: ['Twilio not configured or inactive'] }
+      return { queued: 0, aiGenerated: 0, errors: ['Twilio not configured or inactive'] }
     }
 
     // 3. Fetch active service_due reminder rules with templates
@@ -49,7 +64,7 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
     })
 
     if (rules.length === 0) {
-      return { queued: 0, errors: ['No active reminder rules'] }
+      return { queued: 0, aiGenerated: 0, errors: ['No active reminder rules'] }
     }
 
     // 4. Fetch consented customers with vehicles and latest service records
@@ -110,20 +125,68 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
 
           if (existingMessage) continue
 
-          // 8. Render template body
-          const templateBody = rule.template?.body ?? getFallbackTemplate(rule.sequenceNumber)
-          const body = renderTemplate(templateBody, {
-            firstName: customer.firstName,
-            shopName: org.name,
-            shopPhone: org.phone || '',
-            serviceType: rule.serviceType.displayName,
-            dueDate: latestRecord.nextDueDate.toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            }),
-            vehicleYear: vehicle.year,
-            vehicleMake: vehicle.make,
+          // 8. Generate message body (AI or static template)
+          const dueDate = latestRecord.nextDueDate.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
           })
+          const daysSinceLast = Math.floor(
+            (now.getTime() - latestRecord.serviceDate.getTime()) / (1000 * 60 * 60 * 24)
+          )
+          const daysOverdue = Math.max(0, Math.floor(
+            (now.getTime() - latestRecord.nextDueDate.getTime()) / (1000 * 60 * 60 * 24)
+          ))
+
+          let body: string
+          let wasAIGenerated = false
+
+          if (useAI) {
+            const aiResult = await generateAIMessage({
+              customerFirstName: customer.firstName,
+              shopName: org.name,
+              shopPhone: org.phone || '',
+              serviceType: rule.serviceType.displayName,
+              vehicleYear: vehicle.year,
+              vehicleMake: vehicle.make,
+              vehicleModel: vehicle.model,
+              dueDate,
+              daysSinceLastService: daysSinceLast,
+              mileageAtLastService: vehicle.mileageAtLastService,
+              isOverdue: daysOverdue > 0,
+              daysOverdue,
+              tone: org.aiTone as 'friendly' | 'professional' | 'casual',
+              sequenceNumber: rule.sequenceNumber,
+            }, orgAiConfig)
+
+            if (!aiResult.fallbackUsed && aiResult.body) {
+              body = aiResult.body
+              wasAIGenerated = true
+              aiGenerated++
+            } else {
+              // AI failed — fall back to static template
+              const templateBody = rule.template?.body ?? getFallbackTemplate(rule.sequenceNumber)
+              body = renderTemplate(templateBody, {
+                firstName: customer.firstName,
+                shopName: org.name,
+                shopPhone: org.phone || '',
+                serviceType: rule.serviceType.displayName,
+                dueDate,
+                vehicleYear: vehicle.year,
+                vehicleMake: vehicle.make,
+              })
+            }
+          } else {
+            const templateBody = rule.template?.body ?? getFallbackTemplate(rule.sequenceNumber)
+            body = renderTemplate(templateBody, {
+              firstName: customer.firstName,
+              shopName: org.name,
+              shopPhone: org.phone || '',
+              serviceType: rule.serviceType.displayName,
+              dueDate,
+              vehicleYear: vehicle.year,
+              vehicleMake: vehicle.make,
+            })
+          }
 
           // 9. Create queued ReminderMessage
           try {
@@ -139,6 +202,7 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
                 status: 'queued',
                 direction: 'outbound',
                 body,
+                aiGenerated: wasAIGenerated,
                 toPhone: customer.phone,
                 fromPhone: twilioConfig.phoneNumber,
               },
@@ -151,10 +215,10 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
       }
     }
 
-    return { queued, errors }
+    return { queued, aiGenerated, errors }
   } catch (error) {
     errors.push(String(error))
-    return { queued, errors }
+    return { queued, aiGenerated, errors }
   }
 }
 

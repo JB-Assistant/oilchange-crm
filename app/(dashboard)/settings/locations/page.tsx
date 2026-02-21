@@ -2,20 +2,26 @@ export const dynamic = 'force-dynamic'
 
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { prisma } from '@/lib/prisma'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { MapPin, Plus } from 'lucide-react'
 import { AddLocationForm } from '@/components/settings/add-location-form'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
 
 export default async function LocationsPage() {
   const { orgId } = await auth()
   if (!orgId) redirect('/sign-in')
 
-  const locations = await prisma.location.findMany({
-    where: { orgId },
-    orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-  })
+  const db = getOttoClient()
+  const { data, error } = await db
+    .from('locations')
+    .select('*')
+    .eq('orgId', orgId)
+    .order('isDefault', { ascending: false })
+    .order('name', { ascending: true })
+
+  assertSupabaseError(error, 'Failed to fetch locations')
+  const locations = data ?? []
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">

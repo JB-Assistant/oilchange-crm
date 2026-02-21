@@ -1,36 +1,134 @@
 export const dynamic = 'force-dynamic'
+
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { prisma } from '@/lib/prisma'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { format } from '@/lib/format'
 import Link from 'next/link'
 import { Wrench, ChevronRight, Inbox } from 'lucide-react'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+interface CustomerRow {
+  id: string
+  firstName: string
+  lastName: string
+}
+
+interface VehicleRow {
+  id: string
+  customerId: string
+  year: number
+  make: string
+  model: string
+}
+
+interface ServiceRow {
+  id: string
+  vehicleId: string
+  serviceDate: string
+  mileageAtService: number
+  serviceType: string
+  nextDueDate: string
+}
 
 export default async function ServicesPage() {
   const { orgId } = await auth()
+  if (!orgId) redirect('/')
 
-  if (!orgId) {
-    redirect('/')
+  const db = getOttoClient()
+  const { data: customerRows, error: customerError } = await db
+    .from('customers')
+    .select('id, firstName, lastName')
+    .eq('orgId', orgId)
+  assertSupabaseError(customerError, 'Failed to fetch customers for services page')
+
+  const customers = (customerRows ?? []) as CustomerRow[]
+  if (customers.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-heading text-3xl font-bold">Services</h1>
+          <p className="text-muted-foreground mt-1">All service records across your shop</p>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>All Services (0)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-12">
+              <div className="w-20 h-20 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Inbox className="w-10 h-10 text-zinc-400" />
+              </div>
+              <p className="text-zinc-600 mb-2">No service records yet</p>
+              <p className="text-sm text-zinc-500">
+                Service records will appear here once you add them to customer vehicles.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
-  const services = await prisma.serviceRecord.findMany({
-    where: {
-      vehicle: {
-        customer: {
-          orgId,
-        },
-      },
-    },
-    include: {
-      vehicle: {
-        include: {
-          customer: true,
-        },
-      },
-    },
-    orderBy: { serviceDate: 'desc' },
-  })
+  const customerIds = customers.map((customer) => customer.id)
+  const { data: vehicleRows, error: vehicleError } = await db
+    .from('vehicles')
+    .select('id, customerId, year, make, model')
+    .in('customerId', customerIds)
+  assertSupabaseError(vehicleError, 'Failed to fetch vehicles for services page')
+  const vehicles = (vehicleRows ?? []) as VehicleRow[]
+
+  if (vehicles.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-heading text-3xl font-bold">Services</h1>
+          <p className="text-muted-foreground mt-1">All service records across your shop</p>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>All Services (0)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-12">
+              <div className="w-20 h-20 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Inbox className="w-10 h-10 text-zinc-400" />
+              </div>
+              <p className="text-zinc-600 mb-2">No service records yet</p>
+              <p className="text-sm text-zinc-500">
+                Service records will appear here once you add them to customer vehicles.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  const vehicleIds = vehicles.map((vehicle) => vehicle.id)
+  const { data: serviceRows, error: serviceError } = await db
+    .from('service_records')
+    .select('id, vehicleId, serviceDate, mileageAtService, serviceType, nextDueDate')
+    .in('vehicleId', vehicleIds)
+    .order('serviceDate', { ascending: false })
+  assertSupabaseError(serviceError, 'Failed to fetch service records')
+  const services = (serviceRows ?? []) as ServiceRow[]
+
+  const customerById = new Map(customers.map((customer) => [customer.id, customer]))
+  const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]))
+  const hydratedServices = services
+    .flatMap((service) => {
+      const vehicle = vehicleById.get(service.vehicleId)
+      if (!vehicle) return []
+      const customer = customerById.get(vehicle.customerId)
+      if (!customer) return []
+
+      return [{
+        ...service,
+        vehicle,
+        customer,
+      }]
+    })
 
   return (
     <div className="space-y-6">
@@ -41,10 +139,10 @@ export default async function ServicesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All Services ({services.length})</CardTitle>
+          <CardTitle>All Services ({hydratedServices.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          {services.length === 0 ? (
+          {hydratedServices.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-20 h-20 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Inbox className="w-10 h-10 text-zinc-400" />
@@ -56,8 +154,8 @@ export default async function ServicesPage() {
             </div>
           ) : (
             <div className="divide-y">
-              {services.map((service) => {
-                const customer = service.vehicle.customer
+              {hydratedServices.map((service) => {
+                const customer = service.customer
                 const vehicle = service.vehicle
 
                 return (

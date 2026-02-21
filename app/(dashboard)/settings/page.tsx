@@ -5,11 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { prisma } from '@/lib/prisma'
 import Link from 'next/link'
 import { Building2, CreditCard, Users, Bell, Shield, CheckCircle2, Sparkles, ChevronRight } from 'lucide-react'
 import { PlanFeature } from '@/components/settings/plan-feature'
 import { BillingActions } from '@/components/settings/billing-actions'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
 
 const TIER_LIMITS = {
   starter: { customers: 200, team: 1 },
@@ -21,13 +21,33 @@ export default async function SettingsPage() {
   const { orgId } = await auth()
   if (!orgId) redirect('/')
 
-  const [org, aiConfig] = await Promise.all([
-    prisma.organization.findUnique({ where: { clerkOrgId: orgId } }),
-    prisma.aiConfig.findUnique({ where: { orgId } }),
+  const db = getOttoClient()
+  const [orgRes, aiConfigRes, customerCountRes] = await Promise.all([
+    db
+      .from('organizations')
+      .select('*')
+      .eq('clerkOrgId', orgId)
+      .maybeSingle(),
+    db
+      .from('ai_configs')
+      .select('*')
+      .eq('orgId', orgId)
+      .maybeSingle(),
+    db
+      .from('customers')
+      .select('id', { count: 'exact', head: true })
+      .eq('orgId', orgId),
   ])
+
+  assertSupabaseError(orgRes.error, 'Failed to fetch organization settings')
+  assertSupabaseError(aiConfigRes.error, 'Failed to fetch AI settings')
+  assertSupabaseError(customerCountRes.error, 'Failed to count customers')
+
+  const org = orgRes.data
+  const aiConfig = aiConfigRes.data
   const currentTier = (org?.subscriptionTier || 'starter') as keyof typeof TIER_LIMITS
   const limits = TIER_LIMITS[currentTier]
-  const customerCount = await prisma.customer.count({ where: { orgId } })
+  const customerCount = customerCountRes.count ?? 0
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">

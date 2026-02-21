@@ -1,4 +1,4 @@
-import { CustomerStatus, ContactMethod, FollowUpOutcome } from '@prisma/client'
+import { CustomerStatus, ContactMethod, FollowUpOutcome } from '@/lib/db/enums'
 
 export interface CustomerWithVehicles {
   id: string

@@ -1,9 +1,32 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@prisma/client'
 import { createFollowUpSchema } from '@/lib/validations'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
 import { ZodError } from 'zod'
+
+interface FollowUpRow {
+  id: string
+  customerId: string
+  serviceRecordId: string
+}
+
+interface CustomerRow {
+  id: string
+  firstName: string
+  lastName: string
+}
+
+interface ServiceRecordRow {
+  id: string
+  vehicleId: string
+}
+
+interface VehicleRow {
+  id: string
+  year: number
+  make: string
+  model: string
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,42 +35,67 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const { searchParams } = new URL(request.url)
     const customerId = searchParams.get('customerId')
-    const limit = parseInt(searchParams.get('limit') || '50')
+    const limit = Math.max(1, parseInt(searchParams.get('limit') || '50', 10))
 
-    const where: Prisma.FollowUpRecordWhereInput = { orgId }
+    let query = db
+      .from('follow_up_records')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('contactDate', { ascending: false })
+      .limit(limit)
 
     if (customerId) {
-      where.customerId = customerId
+      query = query.eq('customerId', customerId)
     }
 
-    const records = await prisma.followUpRecord.findMany({
-      where,
-      include: {
-        customer: {
-          select: {
-            firstName: true,
-            lastName: true
-          }
-        },
-        serviceRecord: {
-          include: {
-            vehicle: {
-              select: {
-                year: true,
-                make: true,
-                model: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { contactDate: 'desc' },
-      take: limit
+    const recordsRes = await query
+    assertSupabaseError(recordsRes.error, 'Failed to fetch follow-up records')
+    const records = (recordsRes.data ?? []) as FollowUpRow[]
+
+    const customerIds = Array.from(new Set(records.map((record) => record.customerId)))
+    const serviceRecordIds = Array.from(new Set(records.map((record) => record.serviceRecordId)))
+
+    const [customersRes, serviceRecordsRes] = await Promise.all([
+      customerIds.length > 0
+        ? db.from('customers').select('id, firstName, lastName').in('id', customerIds)
+        : Promise.resolve({ data: [], error: null }),
+      serviceRecordIds.length > 0
+        ? db.from('service_records').select('id, vehicleId').in('id', serviceRecordIds)
+        : Promise.resolve({ data: [], error: null }),
+    ])
+
+    assertSupabaseError(customersRes.error, 'Failed to fetch follow-up customers')
+    assertSupabaseError(serviceRecordsRes.error, 'Failed to fetch follow-up service records')
+
+    const serviceRows = (serviceRecordsRes.data ?? []) as ServiceRecordRow[]
+    const vehicleIds = Array.from(new Set(serviceRows.map((service) => service.vehicleId)))
+    const vehiclesRes = vehicleIds.length > 0
+      ? await db.from('vehicles').select('id, year, make, model').in('id', vehicleIds)
+      : { data: [], error: null }
+
+    assertSupabaseError(vehiclesRes.error, 'Failed to fetch follow-up vehicles')
+
+    const customerById = new Map(((customersRes.data ?? []) as CustomerRow[]).map((customer) => [customer.id, customer]))
+    const serviceById = new Map(serviceRows.map((service) => [service.id, service]))
+    const vehicleById = new Map(((vehiclesRes.data ?? []) as VehicleRow[]).map((vehicle) => [vehicle.id, vehicle]))
+
+    const hydratedRecords = records.map((record) => {
+      const serviceRecord = serviceById.get(record.serviceRecordId)
+      const vehicle = serviceRecord ? vehicleById.get(serviceRecord.vehicleId) : null
+      return {
+        ...record,
+        customer: customerById.get(record.customerId) ?? null,
+        serviceRecord: serviceRecord ? {
+          ...serviceRecord,
+          vehicle: vehicle ?? null,
+        } : null,
+      }
     })
 
-    return NextResponse.json(records)
+    return NextResponse.json(hydratedRecords)
   } catch (error) {
     console.error('Error fetching follow-up records:', error)
     return NextResponse.json({ error: 'Failed to fetch follow-up records' }, { status: 500 })
@@ -61,47 +109,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const body = await request.json()
     const data = createFollowUpSchema.parse(body)
     const { customerId, serviceRecordId, method, outcome, notes, staffMember } = data
 
-    // Verify customer belongs to this org
-    const customer = await prisma.customer.findFirst({
-      where: { id: customerId, orgId }
-    })
+    const customerRes = await db
+      .from('customers')
+      .select('id')
+      .eq('id', customerId)
+      .eq('orgId', orgId)
+      .maybeSingle()
+    assertSupabaseError(customerRes.error, 'Failed to verify follow-up customer')
 
-    if (!customer) {
+    if (!customerRes.data) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
-    // Verify service record exists and belongs to this customer
-    const serviceRecord = await prisma.serviceRecord.findFirst({
-      where: {
-        id: serviceRecordId,
-        vehicle: {
-          customerId
-        }
-      }
-    })
+    const serviceRes = await db
+      .from('service_records')
+      .select('id, vehicleId')
+      .eq('id', serviceRecordId)
+      .maybeSingle()
+    assertSupabaseError(serviceRes.error, 'Failed to verify follow-up service record')
 
-    if (!serviceRecord) {
+    if (!serviceRes.data) {
       return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
     }
 
-    // Create follow-up record
-    const record = await prisma.followUpRecord.create({
-      data: {
+    const vehicleRes = await db
+      .from('vehicles')
+      .select('id')
+      .eq('id', serviceRes.data.vehicleId as string)
+      .eq('customerId', customerId)
+      .maybeSingle()
+    assertSupabaseError(vehicleRes.error, 'Failed to verify follow-up service ownership')
+
+    if (!vehicleRes.data) {
+      return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
+    }
+
+    const recordRes = await db
+      .from('follow_up_records')
+      .insert({
+        id: crypto.randomUUID(),
         customerId,
         serviceRecordId,
         orgId,
+        contactDate: new Date().toISOString(),
         method,
         outcome,
-        notes,
-        staffMember
-      }
-    })
+        notes: notes ?? null,
+        staffMember: staffMember ?? null,
+        createdAt: new Date().toISOString(),
+      })
+      .select('*')
+      .single()
 
-    return NextResponse.json(record, { status: 201 })
+    assertSupabaseError(recordRes.error, 'Failed to create follow-up record')
+    return NextResponse.json(recordRes.data, { status: 201 })
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
@@ -118,6 +184,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
@@ -125,18 +192,23 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Follow-up record ID required' }, { status: 400 })
     }
 
-    // Verify record belongs to this org
-    const record = await prisma.followUpRecord.findFirst({
-      where: { id, orgId }
-    })
+    const recordRes = await db
+      .from('follow_up_records')
+      .select('id')
+      .eq('id', id)
+      .eq('orgId', orgId)
+      .maybeSingle()
+    assertSupabaseError(recordRes.error, 'Failed to verify follow-up record')
 
-    if (!record) {
+    if (!recordRes.data) {
       return NextResponse.json({ error: 'Follow-up record not found' }, { status: 404 })
     }
 
-    await prisma.followUpRecord.delete({
-      where: { id }
-    })
+    const deleteRes = await db
+      .from('follow_up_records')
+      .delete()
+      .eq('id', id)
+    assertSupabaseError(deleteRes.error, 'Failed to delete follow-up record')
 
     return NextResponse.json({ success: true })
   } catch (error) {

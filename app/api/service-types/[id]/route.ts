@@ -1,51 +1,63 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
 
-// PATCH /api/service-types/[id] - Update service type
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth();
+    const { userId, orgId } = await auth()
     if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { id } = await params;
-    const body = await req.json();
-    const serviceType = await prisma.serviceType.update({
-      where: { id, orgId },
-      data: body,
-    });
+    const { id } = await params
+    const body = await req.json()
 
-    return NextResponse.json(serviceType);
+    const db = getOttoClient()
+    const { data, error } = await db
+      .from('service_types')
+      .update({ ...body, updatedAt: new Date().toISOString() })
+      .eq('id', id)
+      .eq('orgId', orgId)
+      .select('*')
+      .maybeSingle()
+
+    assertSupabaseError(error, 'Failed to update service type')
+    if (!data) {
+      return NextResponse.json({ error: 'Service type not found' }, { status: 404 })
+    }
+
+    return NextResponse.json(data)
   } catch (error) {
-    console.error("Error updating service type:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('Error updating service type:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-// DELETE /api/service-types/[id] - Delete service type
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth();
+    const { userId, orgId } = await auth()
     if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { id } = await params;
-    await prisma.serviceType.delete({
-      where: { id, orgId },
-    });
+    const { id } = await params
+    const db = getOttoClient()
+    const { error } = await db
+      .from('service_types')
+      .delete()
+      .eq('id', id)
+      .eq('orgId', orgId)
 
-    return NextResponse.json({ success: true });
+    assertSupabaseError(error, 'Failed to delete service type')
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error deleting service type:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('Error deleting service type:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 import { Search, Filter } from 'lucide-react'
 import {
   Select,

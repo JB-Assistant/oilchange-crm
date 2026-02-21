@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { OttoLogo } from '@/components/ui/otto-logo'
 import { StatusBadge } from '@/components/status-badge'
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 
 export function ComponentShowcase() {
   return (

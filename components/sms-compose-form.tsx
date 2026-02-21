@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { renderTemplate } from '@/lib/template-engine'
 import { format } from '@/lib/format'
 import Link from 'next/link'
-import { Send, Loader2, XCircle } from 'lucide-react'
+import { Send, Loader2, XCircle, Sparkles } from 'lucide-react'
 import { SmsSuccessState } from '@/components/sms/sms-success-state'
 import { SmsCustomerInfo } from '@/components/sms/sms-customer-info'
 import { SmsTemplateSelector, BUILT_IN_TEMPLATES } from '@/components/sms/sms-template-selector'
@@ -57,6 +57,9 @@ export function SmsComposeForm({ customer, vehicles, org, templates, twilioActiv
   const [messageBody, setMessageBody] = useState('')
   const [sendState, setSendState] = useState<SendState>('idle')
   const [errorMessage, setErrorMessage] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [smsConsent, setSmsConsent] = useState(customer.smsConsent)
 
   const selectedVehicle = vehicles.find((v) => v.id === selectedVehicleId) ?? null
   const allTemplates = [...BUILT_IN_TEMPLATES, ...templates]
@@ -101,6 +104,27 @@ export function SmsComposeForm({ customer, vehicles, org, templates, twilioActiv
     }
   }
 
+  async function handleGenerateAi() {
+    setAiLoading(true)
+    setAiError('')
+    try {
+      const res = await fetch('/api/ai-sms/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: customer.id, tone: 'friendly' }),
+      })
+      if (!res.ok) throw new Error('Failed to generate AI message')
+      const data: { aiMessage: string; staticMessage: string; aiAvailable: boolean } = await res.json()
+      if (!data.aiMessage) { setAiError('AI generation is not available right now'); return }
+      setMessageBody(data.aiMessage)
+      setSelectedTemplateId('custom')
+    } catch {
+      setAiError('Failed to generate AI message')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   const charCount = messageBody.length
   const segments = Math.ceil(charCount / 160) || 0
 
@@ -111,7 +135,7 @@ export function SmsComposeForm({ customer, vehicles, org, templates, twilioActiv
   return (
     <Card>
       <CardContent className="p-6 space-y-6">
-        <SmsCustomerInfo firstName={customer.firstName} lastName={customer.lastName} phone={customer.phone} smsConsent={customer.smsConsent} />
+        <SmsCustomerInfo firstName={customer.firstName} lastName={customer.lastName} phone={customer.phone} smsConsent={smsConsent} customerId={customer.id} onConsentChange={(newConsent: boolean) => setSmsConsent(newConsent)} />
 
         {vehicles.length > 1 && (
           <div className="space-y-2">
@@ -131,6 +155,15 @@ export function SmsComposeForm({ customer, vehicles, org, templates, twilioActiv
         )}
 
         <SmsTemplateSelector selectedId={selectedTemplateId} customTemplates={templates} onChange={handleTemplateChange} />
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">or</span>
+          <Button variant="outline" onClick={handleGenerateAi} disabled={aiLoading} className="border-violet-200 hover:bg-violet-50 dark:border-violet-700 dark:hover:bg-violet-950/40 gap-2 min-h-[44px]">
+            {aiLoading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4 text-violet-500" />}
+            Generate with AI
+          </Button>
+        </div>
+        {aiError && <p className="text-xs text-red-600">{aiError}</p>}
 
         <div className="space-y-2">
           <Label>Message</Label>

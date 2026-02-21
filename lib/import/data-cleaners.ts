@@ -135,6 +135,26 @@ export function cleanDate(raw: string): CleaningResult {
     }
   }
 
+  // Excel serial number (days since Dec 30, 1899)
+  const num = Number(trimmed)
+  if (!isNaN(num) && num >= 25569 && num <= 73051) {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30))
+    const ms = excelEpoch.getTime() + num * 86400000
+    const d = new Date(ms)
+    if (isValidDate(d)) {
+      const y = d.getUTCFullYear()
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+      const day = String(d.getUTCDate()).padStart(2, '0')
+      return { cleaned: `${y}-${m}-${day}`, original, status: 'fixed', message: 'Converted from Excel serial' }
+    }
+  }
+
+  // Named month formats: "Jan 15, 2024", "January 15, 2024", "15-Jan-24", "15-Jan-2024"
+  const namedMonthResult = parseNamedMonth(trimmed)
+  if (namedMonthResult) {
+    return { cleaned: namedMonthResult, original, status: 'fixed', message: 'Date normalized from named month' }
+  }
+
   return { cleaned: trimmed, original, status: 'error', message: 'Unrecognized date format' }
 }
 
@@ -253,6 +273,42 @@ export function inferServiceType(description: string): string {
   if (lower.includes('brake')) return 'brake_service'
   if (lower.includes('transmission')) return 'transmission'
   return 'oil_change'
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+  apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+  aug: 8, august: 8, sep: 9, september: 9, oct: 10, october: 10,
+  nov: 11, november: 11, dec: 12, december: 12,
+}
+
+function parseNamedMonth(raw: string): string | null {
+  // "Jan 15, 2024" or "January 15, 2024"
+  const mdyMatch = raw.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/)
+  if (mdyMatch) {
+    const month = MONTHS[mdyMatch[1].toLowerCase()]
+    const day = parseInt(mdyMatch[2])
+    const year = parseInt(mdyMatch[3])
+    if (month && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
+  }
+
+  // "15-Jan-24" or "15-Jan-2024"
+  const dmyMatch = raw.match(/^(\d{1,2})[- ]([A-Za-z]+)[- ](\d{2,4})$/)
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1])
+    const month = MONTHS[dmyMatch[2].toLowerCase()]
+    const shortYear = dmyMatch[3]
+    const year = shortYear.length === 2
+      ? (parseInt(shortYear) > 50 ? `19${shortYear}` : `20${shortYear}`)
+      : shortYear
+    if (month && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
+  }
+
+  return null
 }
 
 function titleCase(str: string): string {

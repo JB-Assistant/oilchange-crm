@@ -1,4 +1,4 @@
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 
 export const STATUS_COLORS = {
   overdue: {

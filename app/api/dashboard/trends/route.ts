@@ -1,6 +1,24 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+interface DateRow {
+  createdAt: string
+}
+
+interface ServiceRow {
+  serviceDate: string
+  serviceType: string
+}
+
+interface MessageRow {
+  createdAt: string
+  status: string
+}
+
+interface StatusRow {
+  status: string
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,60 +27,88 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const db = getOttoClient()
     const { searchParams } = new URL(request.url)
-    const days = parseInt(searchParams.get('days') || '90')
-    const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    const days = parseInt(searchParams.get('days') || '90', 10)
+    const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 
-    // Customer growth: monthly counts
-    const customers = await prisma.customer.findMany({
-      where: { orgId, createdAt: { gte: dateFrom } },
-      select: { createdAt: true },
-      orderBy: { createdAt: 'asc' },
-    })
+    const [customersRes, messagesRes, statusRes, customerIdsRes] = await Promise.all([
+      db
+        .from('customers')
+        .select('createdAt')
+        .eq('orgId', orgId)
+        .gte('createdAt', dateFrom)
+        .order('createdAt', { ascending: true }),
+      db
+        .from('reminder_messages')
+        .select('createdAt, status')
+        .eq('orgId', orgId)
+        .gte('createdAt', dateFrom)
+        .order('createdAt', { ascending: true }),
+      db
+        .from('customers')
+        .select('status')
+        .eq('orgId', orgId),
+      db
+        .from('customers')
+        .select('id')
+        .eq('orgId', orgId),
+    ])
 
-    // Service records: monthly counts by type
-    const services = await prisma.serviceRecord.findMany({
-      where: {
-        vehicle: { customer: { orgId } },
-        serviceDate: { gte: dateFrom },
-      },
-      select: { serviceDate: true, serviceType: true },
-      orderBy: { serviceDate: 'asc' },
-    })
+    assertSupabaseError(customersRes.error, 'Failed to fetch customers trend')
+    assertSupabaseError(messagesRes.error, 'Failed to fetch message trend')
+    assertSupabaseError(statusRes.error, 'Failed to fetch status distribution')
+    assertSupabaseError(customerIdsRes.error, 'Failed to fetch customers for services trend')
 
-    // SMS messages: monthly counts by status
-    const messages = await prisma.reminderMessage.findMany({
-      where: { orgId, createdAt: { gte: dateFrom } },
-      select: { createdAt: true, status: true, direction: true },
-      orderBy: { createdAt: 'asc' },
-    })
+    const customerIds = (customerIdsRes.data ?? []).map((row) => row.id as string)
+    let services: ServiceRow[] = []
 
-    // Aggregate into monthly buckets
-    const customerGrowth = aggregateByMonth(customers.map(c => c.createdAt))
-    const servicesByMonth = aggregateByMonth(services.map(s => s.serviceDate))
-    const smsByMonth = aggregateByMonth(messages.map(m => m.createdAt))
+    if (customerIds.length > 0) {
+      const { data: vehicles, error: vehiclesError } = await db
+        .from('vehicles')
+        .select('id')
+        .in('customerId', customerIds)
+      assertSupabaseError(vehiclesError, 'Failed to fetch vehicles for services trend')
 
-    // Service type distribution
+      const vehicleIds = (vehicles ?? []).map((row) => row.id as string)
+      if (vehicleIds.length > 0) {
+        const servicesRes = await db
+          .from('service_records')
+          .select('serviceDate, serviceType')
+          .in('vehicleId', vehicleIds)
+          .gte('serviceDate', dateFrom)
+          .order('serviceDate', { ascending: true })
+
+        assertSupabaseError(servicesRes.error, 'Failed to fetch services trend')
+        services = (servicesRes.data ?? []) as ServiceRow[]
+      }
+    }
+
+    const customers = (customersRes.data ?? []) as DateRow[]
+    const messages = (messagesRes.data ?? []) as MessageRow[]
+    const statuses = (statusRes.data ?? []) as StatusRow[]
+
+    const customerGrowth = aggregateByMonth(customers.map((c) => c.createdAt))
+    const servicesByMonth = aggregateByMonth(services.map((s) => s.serviceDate))
+    const smsByMonth = aggregateByMonth(messages.map((m) => m.createdAt))
+
     const serviceTypeCounts: Record<string, number> = {}
-    for (const s of services) {
-      const type = s.serviceType.replace(/_/g, ' ')
+    for (const service of services) {
+      const type = service.serviceType.replace(/_/g, ' ')
       serviceTypeCounts[type] = (serviceTypeCounts[type] || 0) + 1
     }
 
-    // SMS delivery stats
     const smsStats = {
-      delivered: messages.filter(m => m.status === 'delivered').length,
-      sent: messages.filter(m => m.status === 'sent').length,
-      failed: messages.filter(m => m.status === 'failed').length,
-      queued: messages.filter(m => m.status === 'queued').length,
+      delivered: messages.filter((m) => m.status === 'delivered').length,
+      sent: messages.filter((m) => m.status === 'sent').length,
+      failed: messages.filter((m) => m.status === 'failed').length,
+      queued: messages.filter((m) => m.status === 'queued').length,
     }
 
-    // Status distribution (current snapshot)
-    const statusCounts = await prisma.customer.groupBy({
-      by: ['status'],
-      where: { orgId },
-      _count: true,
-    })
+    const statusMap = new Map<string, number>()
+    for (const row of statuses) {
+      statusMap.set(row.status, (statusMap.get(row.status) || 0) + 1)
+    }
 
     return NextResponse.json({
       customerGrowth,
@@ -70,10 +116,7 @@ export async function GET(request: NextRequest) {
       smsByMonth,
       serviceTypeCounts,
       smsStats,
-      statusDistribution: statusCounts.map(s => ({
-        status: s.status,
-        count: s._count,
-      })),
+      statusDistribution: Array.from(statusMap.entries()).map(([status, count]) => ({ status, count })),
     })
   } catch (error) {
     console.error('Error fetching trends:', error)
@@ -81,12 +124,14 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function aggregateByMonth(dates: Date[]): { month: string; count: number }[] {
+function aggregateByMonth(dates: string[]): { month: string; count: number }[] {
   const buckets: Record<string, number> = {}
-  for (const date of dates) {
+  for (const dateValue of dates) {
+    const date = new Date(dateValue)
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
     buckets[key] = (buckets[key] || 0) + 1
   }
+
   return Object.entries(buckets)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, count]) => ({ month, count }))

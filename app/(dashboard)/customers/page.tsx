@@ -1,8 +1,7 @@
 export const dynamic = 'force-dynamic'
+
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { prisma } from '@/lib/prisma'
-import { CustomerStatus, Prisma } from '@prisma/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -10,11 +9,39 @@ import Link from 'next/link'
 import { CustomerFilters } from '@/components/customers/customer-filters'
 import { CustomerListItem } from '@/components/customers/customer-list-item'
 import { CustomerEmptyState } from '@/components/customers/customer-empty-state'
+import { type CustomerStatus, CustomerStatus as CustomerStatusValues } from '@/lib/db/enums'
+import { assertSupabaseError, buildSearchPattern, getOttoClient } from '@/lib/supabase/otto'
 
 const PAGE_SIZE = 25
 
 interface CustomersPageProps {
-  searchParams: Promise<{ status?: CustomerStatus; search?: string; page?: string }>
+  searchParams: Promise<{ status?: string; search?: string; page?: string }>
+}
+
+interface CustomerRow {
+  id: string
+  firstName: string
+  lastName: string
+  phone: string
+  status: string
+  createdAt: string
+}
+
+interface VehicleRow {
+  id: string
+  customerId: string
+}
+
+interface ServiceRow {
+  vehicleId: string
+  nextDueDate: string
+  nextDueMileage: number
+  serviceDate: string
+}
+
+function isCustomerStatus(value: string | undefined): value is CustomerStatus {
+  if (!value) return false
+  return Object.values(CustomerStatusValues).includes(value as CustomerStatus)
 }
 
 export default async function CustomersPage({ searchParams }: CustomersPageProps) {
@@ -22,35 +49,93 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   const params = await searchParams
   if (!orgId) redirect('/')
 
-  const page = Math.max(1, parseInt(params.page || '1'))
-  const where: Prisma.CustomerWhereInput = { orgId }
+  const db = getOttoClient()
+  const page = Math.max(1, parseInt(params.page || '1', 10))
 
-  if (params.status && params.status !== ('all' as CustomerStatus)) {
-    where.status = params.status
+  let customersQuery = db
+    .from('customers')
+    .select('*', { count: 'exact' })
+    .eq('orgId', orgId)
+    .order('status', { ascending: true })
+    .order('createdAt', { ascending: false })
+
+  if (isCustomerStatus(params.status)) {
+    customersQuery = customersQuery.eq('status', params.status)
   }
 
   if (params.search) {
-    where.OR = [
-      { firstName: { contains: params.search, mode: 'insensitive' } },
-      { lastName: { contains: params.search, mode: 'insensitive' } },
-      { phone: { contains: params.search } },
-      { email: { contains: params.search, mode: 'insensitive' } }
-    ]
+    const pattern = buildSearchPattern(params.search)
+    customersQuery = customersQuery.or(
+      `firstName.ilike.${pattern},lastName.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`
+    )
   }
 
-  const [customers, total] = await Promise.all([
-    prisma.customer.findMany({
-      where,
-      include: {
-        vehicles: { include: { serviceRecords: { orderBy: { serviceDate: 'desc' }, take: 1 } } }
-      },
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.customer.count({ where }),
-  ])
+  const from = (page - 1) * PAGE_SIZE
+  const to = from + PAGE_SIZE - 1
+  const { data: customerRows, count, error: customersError } = await customersQuery.range(from, to)
+  assertSupabaseError(customersError, 'Failed to fetch customers')
 
+  const customers = (customerRows ?? []) as CustomerRow[]
+  const customerIds = customers.map((customer) => customer.id)
+
+  let vehicles: VehicleRow[] = []
+  let serviceRecords: ServiceRow[] = []
+
+  if (customerIds.length > 0) {
+    const { data: vehicleRows, error: vehicleError } = await db
+      .from('vehicles')
+      .select('id, customerId')
+      .in('customerId', customerIds)
+    assertSupabaseError(vehicleError, 'Failed to fetch customer vehicles')
+    vehicles = (vehicleRows ?? []) as VehicleRow[]
+
+    const vehicleIds = vehicles.map((vehicle) => vehicle.id)
+    if (vehicleIds.length > 0) {
+      const { data: serviceRows, error: serviceError } = await db
+        .from('service_records')
+        .select('vehicleId, nextDueDate, nextDueMileage, serviceDate')
+        .in('vehicleId', vehicleIds)
+        .order('serviceDate', { ascending: false })
+      assertSupabaseError(serviceError, 'Failed to fetch service records')
+      serviceRecords = (serviceRows ?? []) as ServiceRow[]
+    }
+  }
+
+  const latestServiceByVehicle = new Map<string, ServiceRow>()
+  for (const record of serviceRecords) {
+    if (!latestServiceByVehicle.has(record.vehicleId)) {
+      latestServiceByVehicle.set(record.vehicleId, record)
+    }
+  }
+
+  const vehiclesByCustomer = new Map<string, Array<{ serviceRecords: Array<{ nextDueDate: Date; nextDueMileage: number }> }>>()
+  for (const vehicle of vehicles) {
+    const latestService = latestServiceByVehicle.get(vehicle.id)
+    const normalizedVehicle = {
+      serviceRecords: latestService ? [{
+        nextDueDate: new Date(latestService.nextDueDate),
+        nextDueMileage: latestService.nextDueMileage,
+      }] : [],
+    }
+
+    const existing = vehiclesByCustomer.get(vehicle.customerId)
+    if (existing) {
+      existing.push(normalizedVehicle)
+    } else {
+      vehiclesByCustomer.set(vehicle.customerId, [normalizedVehicle])
+    }
+  }
+
+  const hydratedCustomers = customers.map((customer) => ({
+    id: customer.id,
+    firstName: customer.firstName,
+    lastName: customer.lastName,
+    phone: customer.phone,
+    status: customer.status,
+    vehicles: vehiclesByCustomer.get(customer.id) ?? [],
+  }))
+
+  const total = count ?? 0
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
   function buildPageUrl(targetPage: number) {
@@ -81,11 +166,11 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
           <CardTitle>All Customers ({total})</CardTitle>
         </CardHeader>
         <CardContent>
-          {customers.length === 0 ? (
+          {hydratedCustomers.length === 0 ? (
             <CustomerEmptyState searchQuery={params.search} />
           ) : (
             <div className="divide-y">
-              {customers.map((customer) => (
+              {hydratedCustomers.map((customer) => (
                 <CustomerListItem key={customer.id} customer={customer} searchQuery={params.search} />
               ))}
             </div>

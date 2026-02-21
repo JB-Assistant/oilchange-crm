@@ -1,6 +1,23 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+
+interface CustomerTagRow {
+  id: string
+  tags: string[] | null
+}
+
+async function getCustomerForTags(id: string, orgId: string): Promise<CustomerTagRow | null> {
+  const db = getOttoClient()
+  const customerRes = await db
+    .from('customers')
+    .select('id, tags')
+    .eq('id', id)
+    .eq('orgId', orgId)
+    .maybeSingle()
+  assertSupabaseError(customerRes.error, 'Failed to fetch customer tags')
+  return customerRes.data as CustomerTagRow | null
+}
 
 export async function POST(
   req: NextRequest,
@@ -19,24 +36,29 @@ export async function POST(
       return NextResponse.json({ error: 'Tag is required' }, { status: 400 })
     }
 
-    const customer = await prisma.customer.findFirst({
-      where: { id, orgId },
-    })
+    const customer = await getCustomerForTags(id, orgId)
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
+    const currentTags = customer.tags ?? []
     const normalizedTag = tag.trim().toLowerCase()
-    if (customer.tags.includes(normalizedTag)) {
+    if (currentTags.includes(normalizedTag)) {
       return NextResponse.json({ error: 'Tag already exists' }, { status: 400 })
     }
 
-    const updated = await prisma.customer.update({
-      where: { id },
-      data: { tags: { push: normalizedTag } },
-    })
+    const nextTags = [...currentTags, normalizedTag]
+    const db = getOttoClient()
+    const updateRes = await db
+      .from('customers')
+      .update({ tags: nextTags, updatedAt: new Date().toISOString() })
+      .eq('id', id)
+      .eq('orgId', orgId)
+      .select('tags')
+      .single()
 
-    return NextResponse.json({ tags: updated.tags })
+    assertSupabaseError(updateRes.error, 'Failed to add customer tag')
+    return NextResponse.json({ tags: updateRes.data?.tags ?? nextTags })
   } catch (error) {
     console.error('Error adding tag:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -61,19 +83,23 @@ export async function DELETE(
       return NextResponse.json({ error: 'Tag is required' }, { status: 400 })
     }
 
-    const customer = await prisma.customer.findFirst({
-      where: { id, orgId },
-    })
+    const customer = await getCustomerForTags(id, orgId)
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
 
-    const updated = await prisma.customer.update({
-      where: { id },
-      data: { tags: { set: customer.tags.filter(t => t !== tag) } },
-    })
+    const nextTags = (customer.tags ?? []).filter((customerTag) => customerTag !== tag)
+    const db = getOttoClient()
+    const updateRes = await db
+      .from('customers')
+      .update({ tags: nextTags, updatedAt: new Date().toISOString() })
+      .eq('id', id)
+      .eq('orgId', orgId)
+      .select('tags')
+      .single()
 
-    return NextResponse.json({ tags: updated.tags })
+    assertSupabaseError(updateRes.error, 'Failed to remove customer tag')
+    return NextResponse.json({ tags: updateRes.data?.tags ?? nextTags })
   } catch (error) {
     console.error('Error removing tag:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

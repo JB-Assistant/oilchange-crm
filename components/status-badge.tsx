@@ -1,4 +1,4 @@
-import { CustomerStatus } from '@prisma/client'
+import { CustomerStatus } from '@/lib/db/enums'
 import { getStatusColor } from '@/lib/customer-status'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'

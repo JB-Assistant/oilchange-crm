@@ -28,6 +28,10 @@ model Organization {
   reminderEnabled Boolean @default(false)
   reminderQuietStart Int @default(21) // 9 PM
   reminderQuietEnd Int @default(9)   // 9 AM
+
+  // AI SMS Personalization
+  aiPersonalization Boolean @default(false)
+  aiTone            String  @default("friendly") // friendly, professional, casual
   
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
@@ -42,6 +46,7 @@ model Organization {
   reminderMessages ReminderMessage[]
   consentLogs   ConsentLog[]
   twilioConfig  TwilioConfig?
+  aiConfig      AiConfig?
   appointments  Appointment[]
   locations     Location[]
 
@@ -265,6 +270,7 @@ model ReminderMessage {
   
   direction       MessageDirection @default(outbound)
   body            String
+  aiGenerated     Boolean  @default(false)
   
   // For inbound messages
   fromPhone       String?
@@ -316,6 +322,24 @@ model TwilioConfig {
   
   @@index([orgId])
   @@map("twilio_configs")
+}
+
+model AiConfig {
+  id              String   @id @default(cuid())
+  orgId           String   @unique
+  organization    Organization @relation(fields: [orgId], references: [clerkOrgId], onDelete: Cascade)
+
+  provider        String   @default("anthropic") // anthropic, openai, google
+  model           String   @default("claude-haiku-4-5-20251001")
+  apiKey          String   // Encrypted
+
+  isActive        Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgId])
+  @@map("ai_configs")
 }
 
 model Location {
