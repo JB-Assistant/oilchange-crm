@@ -5,12 +5,11 @@ import { processImportRow, rowsToCleanedImport } from '@/lib/import/process-rows
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    await ensureOrganization(orgId)
+    // Returns UUID org_id
+    const orgId = await ensureOrganization(clerkOrgId)
 
     const contentType = request.headers.get('content-type') ?? ''
 
@@ -19,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
     return handleLegacyImport(request, orgId)
   } catch (error) {
-    console.error('Error importing customers:', error)
+    console.error('[import]:', error)
     return NextResponse.json({ error: 'Failed to import customers' }, { status: 500 })
   }
 }
@@ -79,15 +78,8 @@ async function handleWizardImport(request: NextRequest, orgId: string) {
   if (errors > 0) messageParts.push(`${errors} errors`)
 
   return NextResponse.json({
-    success,
-    errors,
-    duplicates,
-    updated,
-    vehiclesCreated,
-    serviceRecordsCreated,
-    message: messageParts.length > 0
-      ? `Imported ${messageParts.join(', ')}`
-      : `No new data to import`,
+    success, errors, duplicates, updated, vehiclesCreated, serviceRecordsCreated,
+    message: messageParts.length > 0 ? `Imported ${messageParts.join(', ')}` : 'No new data to import',
     details: errors > 0 ? errorMessages.slice(0, 10) : undefined,
     warnings: warnings.length > 0 ? warnings.slice(0, 10) : undefined,
   })
@@ -98,9 +90,7 @@ async function handleLegacyImport(request: NextRequest, orgId: string) {
   const file = formData.get('file') as File
   const smsConsent = formData.get('smsConsent') === 'true'
 
-  if (!file) {
-    return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
-  }
+  if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
 
   const Papa = await import('papaparse')
   const rawText = await file.text()
@@ -114,7 +104,6 @@ async function handleLegacyImport(request: NextRequest, orgId: string) {
   const headers = rows[0].map((h: string) => h.trim().toLowerCase())
   const dataRows = rows.slice(1)
 
-  // Build a simple mapping from header names to values
   const cleanedRows = rowsToCleanedImport(
     dataRows.map(row => {
       const cells: Record<string, { value: string }> = {}
@@ -123,7 +112,6 @@ async function handleLegacyImport(request: NextRequest, orgId: string) {
         return idx >= 0 ? (row[idx]?.trim() ?? '') : ''
       }
 
-      // Detect format
       const isShop = headers.includes('full name') || headers.includes('year/make/model')
 
       if (isShop) {
@@ -201,23 +189,14 @@ async function handleLegacyImport(request: NextRequest, orgId: string) {
   }
 
   const format = headers.includes('full name') || headers.includes('year/make/model') ? 'shop' : 'standard'
-
   const messageParts: string[] = []
   if (success > 0) messageParts.push(`${success} new customers`)
   if (updated > 0) messageParts.push(`enriched ${updated} existing`)
   if (errors > 0) messageParts.push(`${errors} errors`)
 
   return NextResponse.json({
-    success,
-    errors,
-    duplicates,
-    updated,
-    format,
-    vehiclesCreated,
-    serviceRecordsCreated,
-    message: messageParts.length > 0
-      ? `Imported ${messageParts.join(', ')}`
-      : `No new data to import`,
+    success, errors, duplicates, updated, format, vehiclesCreated, serviceRecordsCreated,
+    message: messageParts.length > 0 ? `Imported ${messageParts.join(', ')}` : 'No new data to import',
     details: errors > 0 ? errorMessages.slice(0, 10) : undefined,
     warnings: warnings.length > 0 ? warnings.slice(0, 10) : undefined,
   })

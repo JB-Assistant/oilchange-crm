@@ -1,56 +1,49 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
-// GET /api/reminder-templates - List templates for org
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const templates = await prisma.reminderTemplate.findMany({
-      where: { orgId },
-      orderBy: { createdAt: "desc" },
-    });
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    return NextResponse.json(templates);
+    const { data } = await db
+      .from('reminder_templates')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
+
+    return NextResponse.json(data ?? [])
   } catch (error) {
-    console.error("Error fetching templates:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[reminder-templates] GET:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-// POST /api/reminder-templates - Create new template
 export async function POST(req: NextRequest) {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { name, body, isDefault } = await req.json();
+    const { name, body, isDefault } = await req.json()
+    if (!name || !body) return NextResponse.json({ error: 'Name and body are required' }, { status: 400 })
 
-    if (!name || !body) {
-      return NextResponse.json(
-        { error: "Name and body are required" },
-        { status: 400 }
-      );
-    }
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    const template = await prisma.reminderTemplate.create({
-      data: {
-        orgId,
-        name,
-        body,
-        isDefault: isDefault || false,
-      },
-    });
+    const { data: template, error } = await db
+      .from('reminder_templates')
+      .insert({ org_id: orgId, name, body, is_default: isDefault || false })
+      .select('*')
+      .single()
 
-    return NextResponse.json(template, { status: 201 });
+    if (error) throw error
+    return NextResponse.json(template, { status: 201 })
   } catch (error) {
-    console.error("Error creating template:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[reminder-templates] POST:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

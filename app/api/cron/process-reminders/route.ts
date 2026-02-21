@@ -1,51 +1,44 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { evaluateReminders } from "@/lib/reminder-engine";
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient } from '@/lib/supabase/server'
+import { evaluateReminders } from '@/lib/reminder-engine'
 
-// POST /api/cron/process-reminders - Daily cron to evaluate and queue reminders
 export async function POST(req: NextRequest) {
   try {
-    // Verify cron secret
-    const authHeader = req.headers.get("authorization");
+    const authHeader = req.headers.get('authorization')
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get all orgs with reminders enabled
-    const orgs = await prisma.organization.findMany({
-      where: { reminderEnabled: true },
-      include: {
-        serviceTypes: {
-          where: { isActive: true },
-          include: {
-            reminderRules: {
-              where: { isActive: true },
-            },
-          },
-        },
-      },
-    });
+    const db = await createProductAdminClient()
+    const { data: shops } = await db
+      .from('shops')
+      .select('org_id, name, phone, reminder_enabled, reminder_quiet_start, reminder_quiet_end, ai_personalization, ai_tone')
+      .eq('reminder_enabled', true)
 
-    const results = [];
-
-    for (const org of orgs) {
-      const result = await evaluateReminders(org);
+    const results = []
+    for (const shop of (shops ?? [])) {
+      const result = await evaluateReminders({
+        orgId: shop.org_id,
+        name: shop.name,
+        phone: shop.phone,
+        reminderEnabled: shop.reminder_enabled,
+        reminderQuietStart: shop.reminder_quiet_start ?? 21,
+        reminderQuietEnd: shop.reminder_quiet_end ?? 9,
+        aiPersonalization: shop.ai_personalization ?? false,
+        aiTone: shop.ai_tone ?? 'friendly',
+      })
       results.push({
-        orgId: org.id,
-        orgName: org.name,
+        orgId: shop.org_id,
+        orgName: shop.name,
         remindersQueued: result.queued,
         aiGenerated: result.aiGenerated,
         errors: result.errors,
-      });
+      })
     }
 
-    return NextResponse.json({
-      success: true,
-      processed: results.length,
-      results,
-    });
+    return NextResponse.json({ success: true, processed: results.length, results })
   } catch (error) {
-    console.error("Error processing reminders:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[cron/process-reminders]:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -6,18 +6,21 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { MapPin, Plus } from 'lucide-react'
 import { AddLocationForm } from '@/components/settings/add-location-form'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 export default async function LocationsPage() {
-  const { orgId } = await auth()
-  if (!orgId) redirect('/sign-in')
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) redirect('/sign-in')
 
-  const db = getOttoClient()
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
+
   const { data, error } = await db
     .from('locations')
     .select('*')
-    .eq('orgId', orgId)
-    .order('isDefault', { ascending: false })
+    .eq('org_id', orgId)
+    .order('is_default', { ascending: false })
     .order('name', { ascending: true })
 
   assertSupabaseError(error, 'Failed to fetch locations')
@@ -68,8 +71,8 @@ export default async function LocationsPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  {location.isDefault && <Badge>Default</Badge>}
-                  {!location.isActive && <Badge variant="secondary">Inactive</Badge>}
+                  {location.is_default && <Badge>Default</Badge>}
+                  {!location.is_active && <Badge variant="secondary">Inactive</Badge>}
                 </div>
               </CardContent>
             </Card>

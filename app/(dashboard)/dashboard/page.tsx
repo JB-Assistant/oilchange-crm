@@ -9,17 +9,20 @@ import { UpcomingServices } from '@/components/dashboard/upcoming-services'
 import { QuickActions } from '@/components/dashboard/quick-actions'
 import { DashboardCharts } from '@/components/dashboard/dashboard-charts'
 import { CustomerStatus } from '@/lib/db/enums'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
+
+type DbClient = Awaited<ReturnType<typeof createProductAdminClient>>
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
 }
 
 interface VehicleRow {
   id: string
-  customerId: string
+  customer_id: string
   year: number
   make: string
   model: string
@@ -27,39 +30,35 @@ interface VehicleRow {
 
 interface ServiceRow {
   id: string
-  vehicleId: string
-  nextDueDate: string
-  nextDueMileage: number
+  vehicle_id: string
+  next_due_date: string
+  next_due_mileage: number
 }
 
-async function countCustomers(orgId: string, status?: CustomerStatus): Promise<number> {
-  const db = getOttoClient()
-  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('orgId', orgId)
+async function countCustomers(db: DbClient, orgId: string, status?: CustomerStatus): Promise<number> {
+  let query = db.from('customers').select('id', { count: 'exact', head: true }).eq('org_id', orgId)
   if (status) query = query.eq('status', status)
   const { count, error } = await query
   assertSupabaseError(error, 'Failed to count customers')
   return count ?? 0
 }
 
-async function countRecentFollowUps(orgId: string): Promise<number> {
-  const db = getOttoClient()
+async function countRecentFollowUps(db: DbClient, orgId: string): Promise<number> {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { count, error } = await db
     .from('follow_up_records')
     .select('id', { count: 'exact', head: true })
-    .eq('orgId', orgId)
-    .gte('contactDate', since)
+    .eq('org_id', orgId)
+    .gte('contact_date', since)
   assertSupabaseError(error, 'Failed to count recent follow-ups')
   return count ?? 0
 }
 
-async function getUpcomingServices(orgId: string) {
-  const db = getOttoClient()
-
+async function getUpcomingServices(db: DbClient, orgId: string) {
   const { data: customerRows, error: customerError } = await db
     .from('customers')
-    .select('id, firstName, lastName')
-    .eq('orgId', orgId)
+    .select('id, first_name, last_name')
+    .eq('org_id', orgId)
 
   assertSupabaseError(customerError, 'Failed to fetch customers for upcoming services')
   const customers = (customerRows ?? []) as CustomerRow[]
@@ -68,8 +67,8 @@ async function getUpcomingServices(orgId: string) {
   const customerIds = customers.map((c) => c.id)
   const { data: vehicleRows, error: vehicleError } = await db
     .from('vehicles')
-    .select('id, customerId, year, make, model')
-    .in('customerId', customerIds)
+    .select('id, customer_id, year, make, model')
+    .in('customer_id', customerIds)
 
   assertSupabaseError(vehicleError, 'Failed to fetch vehicles for upcoming services')
   const vehicles = (vehicleRows ?? []) as VehicleRow[]
@@ -78,11 +77,11 @@ async function getUpcomingServices(orgId: string) {
   const vehicleIds = vehicles.map((v) => v.id)
   const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
   const { data: serviceRows, error: serviceError } = await db
-    .from('service_records')
-    .select('id, vehicleId, nextDueDate, nextDueMileage')
-    .in('vehicleId', vehicleIds)
-    .lte('nextDueDate', nextMonth)
-    .order('nextDueDate', { ascending: true })
+    .from('repair_orders')
+    .select('id, vehicle_id, next_due_date, next_due_mileage')
+    .in('vehicle_id', vehicleIds)
+    .lte('next_due_date', nextMonth)
+    .order('next_due_date', { ascending: true })
     .limit(20)
 
   assertSupabaseError(serviceError, 'Failed to fetch upcoming services')
@@ -93,22 +92,22 @@ async function getUpcomingServices(orgId: string) {
 
   return services
     .flatMap((service) => {
-      const vehicle = vehicleById.get(service.vehicleId)
+      const vehicle = vehicleById.get(service.vehicle_id)
       if (!vehicle) return []
-      const customer = customerById.get(vehicle.customerId)
+      const customer = customerById.get(vehicle.customer_id)
       if (!customer) return []
 
       return [{
         id: service.id,
-        nextDueDate: new Date(service.nextDueDate),
-        nextDueMileage: service.nextDueMileage,
+        nextDueDate: new Date(service.next_due_date),
+        nextDueMileage: service.next_due_mileage,
         vehicle: {
           year: vehicle.year,
           make: vehicle.make,
           model: vehicle.model,
           customer: {
-            firstName: customer.firstName,
-            lastName: customer.lastName,
+            firstName: customer.first_name,
+            lastName: customer.last_name,
           },
         },
       }]
@@ -117,17 +116,20 @@ async function getUpcomingServices(orgId: string) {
 }
 
 export default async function DashboardPage() {
-  const { orgId } = await auth()
-  if (!orgId) redirect('/')
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) redirect('/')
+
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
 
   const [totalCustomers, overdueCount, dueNowCount, dueSoonCount, upToDateCount, recentFollowUps, upcomingServices] = await Promise.all([
-    countCustomers(orgId),
-    countCustomers(orgId, CustomerStatus.overdue),
-    countCustomers(orgId, CustomerStatus.due_now),
-    countCustomers(orgId, CustomerStatus.due_soon),
-    countCustomers(orgId, CustomerStatus.up_to_date),
-    countRecentFollowUps(orgId),
-    getUpcomingServices(orgId),
+    countCustomers(db, orgId),
+    countCustomers(db, orgId, CustomerStatus.overdue),
+    countCustomers(db, orgId, CustomerStatus.due_now),
+    countCustomers(db, orgId, CustomerStatus.due_soon),
+    countCustomers(db, orgId, CustomerStatus.up_to_date),
+    countRecentFollowUps(db, orgId),
+    getUpcomingServices(db, orgId),
   ])
 
   const conversionRate = totalCustomers > 0 ? Math.round((upToDateCount / totalCustomers) * 100) : 0

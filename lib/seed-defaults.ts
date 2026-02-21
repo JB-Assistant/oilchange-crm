@@ -1,429 +1,57 @@
-import { prisma } from './prisma'
+import { createProductAdminClient } from '@/lib/supabase/server'
 import { DEFAULT_TEMPLATES } from './template-engine'
 
 interface ServiceTypeDefault {
   name: string
-  displayName: string
+  display_name: string
   category: string
   description: string
-  sortOrder: number
-  defaultMileageInterval: number | null
-  defaultTimeIntervalDays: number | null
-  reminderLeadDays: number
+  sort_order: number
+  default_mileage_interval: number | null
+  default_time_interval_days: number | null
+  reminder_lead_days: number
 }
 
 const DEFAULT_SERVICE_TYPES: ServiceTypeDefault[] = [
-  // Oil Change category
-  {
-    name: 'oil_change_standard',
-    displayName: 'Oil Change (Standard)',
-    category: 'oil_change',
-    description: 'Conventional oil change with standard filter',
-    sortOrder: 0,
-    defaultMileageInterval: 5000,
-    defaultTimeIntervalDays: 90,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'oil_change_synthetic',
-    displayName: 'Oil Change (Synthetic)',
-    category: 'oil_change',
-    description: 'Full synthetic oil change with premium filter',
-    sortOrder: 1,
-    defaultMileageInterval: 7500,
-    defaultTimeIntervalDays: 180,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'oil_change_severe',
-    displayName: 'Oil Change (Severe Duty)',
-    category: 'oil_change',
-    description: 'For vehicles under severe driving conditions',
-    sortOrder: 2,
-    defaultMileageInterval: 3000,
-    defaultTimeIntervalDays: 90,
-    reminderLeadDays: 14,
-  },
-  // Tires category
-  {
-    name: 'tire_rotation_standard',
-    displayName: 'Tire Rotation',
-    category: 'tires',
-    description: 'Standard tire rotation for even wear',
-    sortOrder: 0,
-    defaultMileageInterval: 7500,
-    defaultTimeIntervalDays: 180,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'tire_rotation_performance',
-    displayName: 'Tire Rotation (Performance)',
-    category: 'tires',
-    description: 'Performance tire rotation with inspection',
-    sortOrder: 1,
-    defaultMileageInterval: 5000,
-    defaultTimeIntervalDays: 120,
-    reminderLeadDays: 14,
-  },
-  // Brakes category
-  {
-    name: 'brake_pad_inspection',
-    displayName: 'Brake Pad Inspection',
-    category: 'brakes',
-    description: 'Visual brake pad thickness and wear inspection',
-    sortOrder: 0,
-    defaultMileageInterval: 15000,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'brake_fluid_flush',
-    displayName: 'Brake Fluid Flush',
-    category: 'brakes',
-    description: 'Complete brake fluid replacement',
-    sortOrder: 1,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 30,
-  },
-  {
-    name: 'brake_pad_replacement',
-    displayName: 'Brake Pad Replacement',
-    category: 'brakes',
-    description: 'Replace worn brake pads',
-    sortOrder: 2,
-    defaultMileageInterval: 25000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  // Transmission category
-  {
-    name: 'transmission_fluid_check',
-    displayName: 'Transmission Fluid Check',
-    category: 'transmission',
-    description: 'Check transmission fluid level and condition',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'transmission_fluid_change',
-    displayName: 'Transmission Fluid Change',
-    category: 'transmission',
-    description: 'Full transmission fluid replacement',
-    sortOrder: 1,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 30,
-  },
-  // Cooling category
-  {
-    name: 'coolant_flush',
-    displayName: 'Coolant Flush',
-    category: 'cooling',
-    description: 'Complete coolant system flush and refill',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 30,
-  },
-  {
-    name: 'coolant_topoff',
-    displayName: 'Coolant Top-Off',
-    category: 'cooling',
-    description: 'Top off coolant to proper level',
-    sortOrder: 1,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  // Electrical category
-  {
-    name: 'battery_test',
-    displayName: 'Battery Test',
-    category: 'electrical',
-    description: 'Load test and terminal inspection',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'battery_replacement',
-    displayName: 'Battery Replacement',
-    category: 'electrical',
-    description: 'Replace vehicle battery',
-    sortOrder: 1,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 1460,
-    reminderLeadDays: 30,
-  },
-  // Filters category
-  {
-    name: 'engine_air_filter',
-    displayName: 'Engine Air Filter',
-    category: 'filters',
-    description: 'Replace engine air filter',
-    sortOrder: 0,
-    defaultMileageInterval: 15000,
-    defaultTimeIntervalDays: 545,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'cabin_air_filter',
-    displayName: 'Cabin Air Filter',
-    category: 'filters',
-    description: 'Replace cabin air filter',
-    sortOrder: 1,
-    defaultMileageInterval: 12000,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  // Wipers category
-  {
-    name: 'wiper_blades',
-    displayName: 'Wiper Blades',
-    category: 'wipers',
-    description: 'Replace windshield wiper blades',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 270,
-    reminderLeadDays: 14,
-  },
-  // Fluids category
-  {
-    name: 'power_steering_fluid',
-    displayName: 'Power Steering Fluid',
-    category: 'fluids',
-    description: 'Check and replace power steering fluid',
-    sortOrder: 0,
-    defaultMileageInterval: 50000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  // Inspection category
-  {
-    name: 'state_inspection',
-    displayName: 'State Inspection',
-    category: 'inspection',
-    description: 'Annual state vehicle inspection',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 30,
-  },
-  // Alignment category
-  {
-    name: 'wheel_alignment_check',
-    displayName: 'Wheel Alignment Check',
-    category: 'alignment',
-    description: 'Check and adjust wheel alignment angles',
-    sortOrder: 0,
-    defaultMileageInterval: 12000,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'wheel_alignment_full',
-    displayName: 'Full Wheel Alignment',
-    category: 'alignment',
-    description: 'Complete four-wheel alignment service',
-    sortOrder: 1,
-    defaultMileageInterval: 24000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
-  // Engine category
-  {
-    name: 'spark_plug_replacement',
-    displayName: 'Spark Plug Replacement',
-    category: 'engine',
-    description: 'Replace spark plugs for optimal ignition',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'engine_tune_up',
-    displayName: 'Engine Tune-Up',
-    category: 'engine',
-    description: 'Comprehensive engine tune-up service',
-    sortOrder: 1,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
-  // Belts category
-  {
-    name: 'timing_belt_inspection',
-    displayName: 'Timing Belt Inspection',
-    category: 'belts',
-    description: 'Inspect timing belt condition and tension',
-    sortOrder: 0,
-    defaultMileageInterval: 50000,
-    defaultTimeIntervalDays: 1825,
-    reminderLeadDays: 30,
-  },
-  {
-    name: 'timing_belt_replacement',
-    displayName: 'Timing Belt Replacement',
-    category: 'belts',
-    description: 'Replace timing belt to prevent engine damage',
-    sortOrder: 1,
-    defaultMileageInterval: 60000,
-    defaultTimeIntervalDays: 2190,
-    reminderLeadDays: 30,
-  },
-  {
-    name: 'serpentine_belt',
-    displayName: 'Serpentine Belt',
-    category: 'belts',
-    description: 'Inspect and replace serpentine/drive belt',
-    sortOrder: 2,
-    defaultMileageInterval: 60000,
-    defaultTimeIntervalDays: 1460,
-    reminderLeadDays: 14,
-  },
-  // Fuel system category
-  {
-    name: 'fuel_filter',
-    displayName: 'Fuel Filter Replacement',
-    category: 'fuel_system',
-    description: 'Replace fuel filter for clean fuel delivery',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'fuel_injection_cleaning',
-    displayName: 'Fuel Injection Cleaning',
-    category: 'fuel_system',
-    description: 'Clean fuel injectors and throttle body',
-    sortOrder: 1,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  // Drivetrain category
-  {
-    name: 'differential_fluid',
-    displayName: 'Differential Fluid Service',
-    category: 'drivetrain',
-    description: 'Replace differential fluid (front/rear)',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'transfer_case_fluid',
-    displayName: 'Transfer Case Fluid',
-    category: 'drivetrain',
-    description: 'Replace transfer case fluid (4WD/AWD vehicles)',
-    sortOrder: 1,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  // AC category
-  {
-    name: 'ac_recharge',
-    displayName: 'AC Recharge',
-    category: 'ac',
-    description: 'Recharge vehicle AC refrigerant',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 30,
-  },
-  {
-    name: 'ac_system_inspection',
-    displayName: 'AC System Inspection',
-    category: 'ac',
-    description: 'Full AC system performance check',
-    sortOrder: 1,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 14,
-  },
-  // Exhaust category
-  {
-    name: 'exhaust_inspection',
-    displayName: 'Exhaust System Inspection',
-    category: 'exhaust',
-    description: 'Inspect exhaust system for leaks and damage',
-    sortOrder: 0,
-    defaultMileageInterval: 30000,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
-  // Suspension category
-  {
-    name: 'suspension_inspection',
-    displayName: 'Suspension Inspection',
-    category: 'suspension',
-    description: 'Inspect shocks, struts, and suspension components',
-    sortOrder: 0,
-    defaultMileageInterval: 50000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'shock_strut_replacement',
-    displayName: 'Shock/Strut Replacement',
-    category: 'suspension',
-    description: 'Replace worn shocks or struts',
-    sortOrder: 1,
-    defaultMileageInterval: 50000,
-    defaultTimeIntervalDays: null,
-    reminderLeadDays: 14,
-  },
-  // Emissions category
-  {
-    name: 'emissions_test',
-    displayName: 'Emissions / Smog Test',
-    category: 'emissions',
-    description: 'State emissions or smog test',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 365,
-    reminderLeadDays: 30,
-  },
-  // Lighting category
-  {
-    name: 'headlight_restoration',
-    displayName: 'Headlight Restoration',
-    category: 'lighting',
-    description: 'Restore cloudy/yellowed headlight lenses',
-    sortOrder: 0,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
-  {
-    name: 'bulb_replacement',
-    displayName: 'Headlight/Bulb Replacement',
-    category: 'lighting',
-    description: 'Replace headlight, taillight, or signal bulbs',
-    sortOrder: 1,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
-  // Radiator category
-  {
-    name: 'radiator_hose_inspection',
-    displayName: 'Radiator Hose Inspection',
-    category: 'cooling',
-    description: 'Inspect radiator hoses for cracks, bulges, and leaks',
-    sortOrder: 2,
-    defaultMileageInterval: null,
-    defaultTimeIntervalDays: 730,
-    reminderLeadDays: 14,
-  },
+  { name: 'oil_change_standard', display_name: 'Oil Change (Standard)', category: 'oil_change', description: 'Conventional oil change with standard filter', sort_order: 0, default_mileage_interval: 5000, default_time_interval_days: 90, reminder_lead_days: 14 },
+  { name: 'oil_change_synthetic', display_name: 'Oil Change (Synthetic)', category: 'oil_change', description: 'Full synthetic oil change with premium filter', sort_order: 1, default_mileage_interval: 7500, default_time_interval_days: 180, reminder_lead_days: 14 },
+  { name: 'oil_change_severe', display_name: 'Oil Change (Severe Duty)', category: 'oil_change', description: 'For vehicles under severe driving conditions', sort_order: 2, default_mileage_interval: 3000, default_time_interval_days: 90, reminder_lead_days: 14 },
+  { name: 'tire_rotation_standard', display_name: 'Tire Rotation', category: 'tires', description: 'Standard tire rotation for even wear', sort_order: 0, default_mileage_interval: 7500, default_time_interval_days: 180, reminder_lead_days: 14 },
+  { name: 'tire_rotation_performance', display_name: 'Tire Rotation (Performance)', category: 'tires', description: 'Performance tire rotation with inspection', sort_order: 1, default_mileage_interval: 5000, default_time_interval_days: 120, reminder_lead_days: 14 },
+  { name: 'brake_pad_inspection', display_name: 'Brake Pad Inspection', category: 'brakes', description: 'Visual brake pad thickness and wear inspection', sort_order: 0, default_mileage_interval: 15000, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'brake_fluid_flush', display_name: 'Brake Fluid Flush', category: 'brakes', description: 'Complete brake fluid replacement', sort_order: 1, default_mileage_interval: 30000, default_time_interval_days: 730, reminder_lead_days: 30 },
+  { name: 'brake_pad_replacement', display_name: 'Brake Pad Replacement', category: 'brakes', description: 'Replace worn brake pads', sort_order: 2, default_mileage_interval: 25000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'transmission_fluid_check', display_name: 'Transmission Fluid Check', category: 'transmission', description: 'Check transmission fluid level and condition', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'transmission_fluid_change', display_name: 'Transmission Fluid Change', category: 'transmission', description: 'Full transmission fluid replacement', sort_order: 1, default_mileage_interval: 30000, default_time_interval_days: 730, reminder_lead_days: 30 },
+  { name: 'coolant_flush', display_name: 'Coolant Flush', category: 'cooling', description: 'Complete coolant system flush and refill', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: 730, reminder_lead_days: 30 },
+  { name: 'coolant_topoff', display_name: 'Coolant Top-Off', category: 'cooling', description: 'Top off coolant to proper level', sort_order: 1, default_mileage_interval: null, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'battery_test', display_name: 'Battery Test', category: 'electrical', description: 'Load test and terminal inspection', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'battery_replacement', display_name: 'Battery Replacement', category: 'electrical', description: 'Replace vehicle battery', sort_order: 1, default_mileage_interval: null, default_time_interval_days: 1460, reminder_lead_days: 30 },
+  { name: 'engine_air_filter', display_name: 'Engine Air Filter', category: 'filters', description: 'Replace engine air filter', sort_order: 0, default_mileage_interval: 15000, default_time_interval_days: 545, reminder_lead_days: 14 },
+  { name: 'cabin_air_filter', display_name: 'Cabin Air Filter', category: 'filters', description: 'Replace cabin air filter', sort_order: 1, default_mileage_interval: 12000, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'wiper_blades', display_name: 'Wiper Blades', category: 'wipers', description: 'Replace windshield wiper blades', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 270, reminder_lead_days: 14 },
+  { name: 'power_steering_fluid', display_name: 'Power Steering Fluid', category: 'fluids', description: 'Check and replace power steering fluid', sort_order: 0, default_mileage_interval: 50000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'state_inspection', display_name: 'State Inspection', category: 'inspection', description: 'Annual state vehicle inspection', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 365, reminder_lead_days: 30 },
+  { name: 'wheel_alignment_check', display_name: 'Wheel Alignment Check', category: 'alignment', description: 'Check and adjust wheel alignment angles', sort_order: 0, default_mileage_interval: 12000, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'wheel_alignment_full', display_name: 'Full Wheel Alignment', category: 'alignment', description: 'Complete four-wheel alignment service', sort_order: 1, default_mileage_interval: 24000, default_time_interval_days: 730, reminder_lead_days: 14 },
+  { name: 'spark_plug_replacement', display_name: 'Spark Plug Replacement', category: 'engine', description: 'Replace spark plugs for optimal ignition', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'engine_tune_up', display_name: 'Engine Tune-Up', category: 'engine', description: 'Comprehensive engine tune-up service', sort_order: 1, default_mileage_interval: 30000, default_time_interval_days: 730, reminder_lead_days: 14 },
+  { name: 'timing_belt_inspection', display_name: 'Timing Belt Inspection', category: 'belts', description: 'Inspect timing belt condition and tension', sort_order: 0, default_mileage_interval: 50000, default_time_interval_days: 1825, reminder_lead_days: 30 },
+  { name: 'timing_belt_replacement', display_name: 'Timing Belt Replacement', category: 'belts', description: 'Replace timing belt to prevent engine damage', sort_order: 1, default_mileage_interval: 60000, default_time_interval_days: 2190, reminder_lead_days: 30 },
+  { name: 'serpentine_belt', display_name: 'Serpentine Belt', category: 'belts', description: 'Inspect and replace serpentine/drive belt', sort_order: 2, default_mileage_interval: 60000, default_time_interval_days: 1460, reminder_lead_days: 14 },
+  { name: 'fuel_filter', display_name: 'Fuel Filter Replacement', category: 'fuel_system', description: 'Replace fuel filter for clean fuel delivery', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'fuel_injection_cleaning', display_name: 'Fuel Injection Cleaning', category: 'fuel_system', description: 'Clean fuel injectors and throttle body', sort_order: 1, default_mileage_interval: 30000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'differential_fluid', display_name: 'Differential Fluid Service', category: 'drivetrain', description: 'Replace differential fluid (front/rear)', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'transfer_case_fluid', display_name: 'Transfer Case Fluid', category: 'drivetrain', description: 'Replace transfer case fluid (4WD/AWD vehicles)', sort_order: 1, default_mileage_interval: 30000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'ac_recharge', display_name: 'AC Recharge', category: 'ac', description: 'Recharge vehicle AC refrigerant', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 730, reminder_lead_days: 30 },
+  { name: 'ac_system_inspection', display_name: 'AC System Inspection', category: 'ac', description: 'Full AC system performance check', sort_order: 1, default_mileage_interval: null, default_time_interval_days: 365, reminder_lead_days: 14 },
+  { name: 'exhaust_inspection', display_name: 'Exhaust System Inspection', category: 'exhaust', description: 'Inspect exhaust system for leaks and damage', sort_order: 0, default_mileage_interval: 30000, default_time_interval_days: 730, reminder_lead_days: 14 },
+  { name: 'suspension_inspection', display_name: 'Suspension Inspection', category: 'suspension', description: 'Inspect shocks, struts, and suspension components', sort_order: 0, default_mileage_interval: 50000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'shock_strut_replacement', display_name: 'Shock/Strut Replacement', category: 'suspension', description: 'Replace worn shocks or struts', sort_order: 1, default_mileage_interval: 50000, default_time_interval_days: null, reminder_lead_days: 14 },
+  { name: 'emissions_test', display_name: 'Emissions / Smog Test', category: 'emissions', description: 'State emissions or smog test', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 365, reminder_lead_days: 30 },
+  { name: 'headlight_restoration', display_name: 'Headlight Restoration', category: 'lighting', description: 'Restore cloudy/yellowed headlight lenses', sort_order: 0, default_mileage_interval: null, default_time_interval_days: 730, reminder_lead_days: 14 },
+  { name: 'bulb_replacement', display_name: 'Headlight/Bulb Replacement', category: 'lighting', description: 'Replace headlight, taillight, or signal bulbs', sort_order: 1, default_mileage_interval: null, default_time_interval_days: 730, reminder_lead_days: 14 },
+  { name: 'radiator_hose_inspection', display_name: 'Radiator Hose Inspection', category: 'cooling', description: 'Inspect radiator hoses for cracks, bulges, and leaks', sort_order: 2, default_mileage_interval: null, default_time_interval_days: 730, reminder_lead_days: 14 },
 ]
 
 const TEMPLATE_DEFS = [
@@ -434,112 +62,100 @@ const TEMPLATE_DEFS = [
   { name: 'Two Weeks Overdue', body: DEFAULT_TEMPLATES.twoWeeksOverdue },
 ] as const
 
-// Sequence definitions: [sequenceNumber, offsetDays, templateIndex]
+// [sequenceNumber, offsetDays, templateIndex]
 const RULE_SEQUENCES: [number, number, number][] = [
-  [1, -14, 0], // Two weeks before
-  [2, -7, 1],  // One week before
-  [3, 0, 2],   // Due date
-  [4, 7, 3],   // One week overdue
-  [5, 14, 4],  // Two weeks overdue
+  [1, -14, 0],
+  [2, -7, 1],
+  [3, 0, 2],
+  [4, 7, 3],
+  [5, 14, 4],
 ]
 
 /** Category display names for UI grouping */
 export const SERVICE_CATEGORIES: Record<string, string> = {
-  oil_change: 'Oil Change',
-  tires: 'Tires',
-  brakes: 'Brakes',
-  transmission: 'Transmission',
-  cooling: 'Cooling System',
-  electrical: 'Electrical',
-  filters: 'Filters',
-  wipers: 'Wipers',
-  fluids: 'Fluids',
-  inspection: 'Inspection',
-  alignment: 'Wheel Alignment',
-  engine: 'Engine',
-  belts: 'Belts & Timing',
-  fuel_system: 'Fuel System',
-  drivetrain: 'Drivetrain',
-  ac: 'AC / Climate',
-  exhaust: 'Exhaust',
-  suspension: 'Suspension',
-  emissions: 'Emissions',
-  lighting: 'Lighting',
+  oil_change: 'Oil Change', tires: 'Tires', brakes: 'Brakes',
+  transmission: 'Transmission', cooling: 'Cooling System',
+  electrical: 'Electrical', filters: 'Filters', wipers: 'Wipers',
+  fluids: 'Fluids', inspection: 'Inspection', alignment: 'Wheel Alignment',
+  engine: 'Engine', belts: 'Belts & Timing', fuel_system: 'Fuel System',
+  drivetrain: 'Drivetrain', ac: 'AC / Climate', exhaust: 'Exhaust',
+  suspension: 'Suspension', emissions: 'Emissions', lighting: 'Lighting',
   general: 'General',
 }
 
-async function ensureServiceTypes(orgId: string) {
-  const existing = await prisma.serviceType.findMany({
-    where: { orgId },
-    select: { name: true },
-  })
-  const existingNames = new Set(existing.map((st) => st.name))
+async function ensureServiceTypes(orgId: string, db: Awaited<ReturnType<typeof createProductAdminClient>>) {
+  const { data: existing } = await db
+    .from('service_types')
+    .select('name')
+    .eq('org_id', orgId)
 
-  const missing = DEFAULT_SERVICE_TYPES.filter(
-    (st) => !existingNames.has(st.name)
-  )
+  const existingNames = new Set((existing ?? []).map((st: { name: string }) => st.name))
+  const missing = DEFAULT_SERVICE_TYPES.filter((st) => !existingNames.has(st.name))
 
   if (missing.length > 0) {
-    await prisma.serviceType.createMany({
-      data: missing.map((st) => ({
-        orgId,
-        name: st.name,
-        displayName: st.displayName,
-        category: st.category,
-        description: st.description,
-        sortOrder: st.sortOrder,
-        defaultMileageInterval: st.defaultMileageInterval,
-        defaultTimeIntervalDays: st.defaultTimeIntervalDays,
-        reminderLeadDays: st.reminderLeadDays,
-        isCustom: false,
-      })),
-    })
+    await db.from('service_types').insert(
+      missing.map((st) => ({ org_id: orgId, is_custom: false, is_active: true, ...st }))
+    )
   }
 
-  return prisma.serviceType.findMany({ where: { orgId } })
+  const { data } = await db.from('service_types').select('id').eq('org_id', orgId)
+  return data ?? []
 }
 
-async function ensureTemplates(orgId: string) {
-  const count = await prisma.reminderTemplate.count({ where: { orgId } })
-  if (count > 0) return prisma.reminderTemplate.findMany({ where: { orgId } })
+async function ensureTemplates(orgId: string, db: Awaited<ReturnType<typeof createProductAdminClient>>) {
+  const { count } = await db
+    .from('reminder_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
 
-  return Promise.all(
-    TEMPLATE_DEFS.map((t) =>
-      prisma.reminderTemplate.create({
-        data: {
-          orgId,
-          name: t.name,
-          body: t.body,
-          isDefault: true,
-        },
-      })
+  if (count && count > 0) {
+    const { data } = await db.from('reminder_templates').select('id').eq('org_id', orgId)
+    return data ?? []
+  }
+
+  const { data } = await db
+    .from('reminder_templates')
+    .insert(
+      TEMPLATE_DEFS.map((t) => ({ org_id: orgId, name: t.name, body: t.body, is_default: true }))
     )
-  )
+    .select('id')
+
+  return data ?? []
 }
 
 async function ensureReminderRules(
   orgId: string,
   serviceTypes: { id: string }[],
-  templates: { id: string }[]
+  templates: { id: string }[],
+  db: Awaited<ReturnType<typeof createProductAdminClient>>
 ) {
-  const count = await prisma.reminderRule.count({ where: { orgId } })
-  if (count > 0) return
+  const { count } = await db
+    .from('reminder_rules')
+    .select('id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
+
+  if (count && count > 0) return
 
   const rules = serviceTypes.flatMap((st) =>
     RULE_SEQUENCES.map(([seq, offset, tplIdx]) => ({
-      orgId,
-      serviceTypeId: st.id,
-      sequenceNumber: seq,
-      offsetDays: offset,
-      templateId: templates[tplIdx]?.id ?? null,
+      org_id: orgId,
+      service_type_id: st.id,
+      sequence_number: seq,
+      offset_days: offset,
+      template_id: templates[tplIdx]?.id ?? null,
+      is_active: true,
+      reminder_type: 'service_due',
     }))
   )
 
-  await prisma.reminderRule.createMany({ data: rules })
+  if (rules.length > 0) {
+    await db.from('reminder_rules').insert(rules)
+  }
 }
 
 export async function seedOrgDefaults(orgId: string) {
-  const serviceTypes = await ensureServiceTypes(orgId)
-  const templates = await ensureTemplates(orgId)
-  await ensureReminderRules(orgId, serviceTypes, templates)
+  const db = await createProductAdminClient()
+  const serviceTypes = await ensureServiceTypes(orgId, db)
+  const templates = await ensureTemplates(orgId, db)
+  await ensureReminderRules(orgId, serviceTypes, templates, db)
 }

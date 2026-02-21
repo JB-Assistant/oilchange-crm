@@ -1,74 +1,58 @@
-import { auth } from "@clerk/nextjs/server"
-import { NextRequest, NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
-import { ensureOrganization } from "@/lib/ensure-org"
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
+import { ensureOrganization } from '@/lib/ensure-org'
 
-const VALID_TONES = ["friendly", "professional", "casual"] as const
+const VALID_TONES = ['friendly', 'professional', 'casual'] as const
 
 export async function GET() {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    await ensureOrganization(orgId)
+    const orgId = await ensureOrganization(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    const org = await prisma.organization.findUnique({
-      where: { clerkOrgId: orgId },
-      select: {
-        aiPersonalization: true,
-        aiTone: true,
-      },
-    })
+    const { data: shop } = await db
+      .from('shops')
+      .select('ai_personalization, ai_tone')
+      .eq('org_id', orgId)
+      .maybeSingle()
 
-    if (!org) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 })
-    }
+    if (!shop) return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
 
-    return NextResponse.json({
-      aiPersonalization: org.aiPersonalization,
-      aiTone: org.aiTone,
-    })
+    return NextResponse.json({ aiPersonalization: shop.ai_personalization, aiTone: shop.ai_tone })
   } catch (error) {
-    console.error("Error fetching AI settings:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error('[settings/ai] GET:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { aiPersonalization, aiTone } = await req.json()
 
-    if (typeof aiPersonalization !== "boolean") {
-      return NextResponse.json({ error: "aiPersonalization must be a boolean" }, { status: 400 })
+    if (typeof aiPersonalization !== 'boolean') {
+      return NextResponse.json({ error: 'aiPersonalization must be a boolean' }, { status: 400 })
     }
-
     if (aiTone && !VALID_TONES.includes(aiTone)) {
-      return NextResponse.json(
-        { error: `aiTone must be one of: ${VALID_TONES.join(", ")}` },
-        { status: 400 },
-      )
+      return NextResponse.json({ error: `aiTone must be one of: ${VALID_TONES.join(', ')}` }, { status: 400 })
     }
 
-    await ensureOrganization(orgId)
+    const orgId = await ensureOrganization(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    await prisma.organization.update({
-      where: { clerkOrgId: orgId },
-      data: {
-        aiPersonalization,
-        ...(aiTone ? { aiTone } : {}),
-      },
-    })
+    await db
+      .from('shops')
+      .update({ ai_personalization: aiPersonalization, ...(aiTone ? { ai_tone: aiTone } : {}), updated_at: new Date().toISOString() })
+      .eq('org_id', orgId)
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error saving AI settings:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error('[settings/ai] POST:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

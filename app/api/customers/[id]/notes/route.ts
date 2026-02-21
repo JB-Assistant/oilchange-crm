@@ -1,16 +1,15 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
-async function verifyCustomerInOrg(customerId: string, orgId: string) {
-  const db = getOttoClient()
+async function verifyCustomerInOrg(db: Awaited<ReturnType<typeof createProductAdminClient>>, customerId: string, orgId: string) {
   const customerRes = await db
     .from('customers')
     .select('id')
     .eq('id', customerId)
-    .eq('orgId', orgId)
+    .eq('org_id', orgId)
     .maybeSingle()
-
   assertSupabaseError(customerRes.error, 'Failed to verify customer access')
   return Boolean(customerRes.data)
 }
@@ -20,28 +19,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth()
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { id } = await params
-    const customerExists = await verifyCustomerInOrg(id, orgId)
-    if (!customerExists) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-    }
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    const db = getOttoClient()
+    const customerExists = await verifyCustomerInOrg(db, id, orgId)
+    if (!customerExists) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+
     const notesRes = await db
       .from('customer_notes')
       .select('*')
-      .eq('customerId', id)
-      .order('createdAt', { ascending: false })
-
+      .eq('customer_id', id)
+      .order('created_at', { ascending: false })
     assertSupabaseError(notesRes.error, 'Failed to fetch customer notes')
+
     return NextResponse.json(notesRes.data ?? [])
   } catch (error) {
-    console.error('Error fetching notes:', error)
+    console.error('[customers/notes] GET:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
@@ -51,10 +48,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth()
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { id } = await params
     const { body } = await req.json()
@@ -63,29 +58,30 @@ export async function POST(
       return NextResponse.json({ error: 'Note body is required' }, { status: 400 })
     }
 
-    const customerExists = await verifyCustomerInOrg(id, orgId)
-    if (!customerExists) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-    }
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    const db = getOttoClient()
+    const customerExists = await verifyCustomerInOrg(db, id, orgId)
+    if (!customerExists) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+
     const now = new Date().toISOString()
     const noteRes = await db
       .from('customer_notes')
       .insert({
         id: crypto.randomUUID(),
-        customerId: id,
+        customer_id: id,
+        org_id: orgId,
         body: body.trim(),
-        createdBy: userId,
-        createdAt: now,
+        created_by: userId,
+        created_at: now,
       })
       .select('*')
       .single()
-
     assertSupabaseError(noteRes.error, 'Failed to create customer note')
+
     return NextResponse.json(noteRes.data, { status: 201 })
   } catch (error) {
-    console.error('Error creating note:', error)
+    console.error('[customers/notes] POST:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

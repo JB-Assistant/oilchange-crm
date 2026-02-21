@@ -6,7 +6,8 @@ import { SmsComposeForm } from '@/components/sms-compose-form'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { ArrowLeft, AlertTriangle } from 'lucide-react'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 interface SmsPageProps {
   params: Promise<{ id: string }>
@@ -14,15 +15,15 @@ interface SmsPageProps {
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
-  smsConsent: boolean
+  sms_consent: boolean
 }
 
 interface VehicleRow {
   id: string
-  customerId: string
+  customer_id: string
   year: number
   make: string
   model: string
@@ -30,10 +31,10 @@ interface VehicleRow {
 
 interface ServiceRow {
   id: string
-  vehicleId: string
-  serviceType: string
-  nextDueDate: string
-  serviceDate: string
+  vehicle_id: string
+  service_type: string
+  next_due_date: string
+  service_date: string
 }
 
 interface TemplateRow {
@@ -43,50 +44,52 @@ interface TemplateRow {
 }
 
 export default async function SmsPage({ params }: SmsPageProps) {
-  const { orgId } = await auth()
+  const { orgId: clerkOrgId } = await auth()
   const { id } = await params
-  if (!orgId) redirect('/')
+  if (!clerkOrgId) redirect('/')
 
-  const db = getOttoClient()
-  const [customerRes, orgRes, templatesRes, twilioRes] = await Promise.all([
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
+
+  const [customerRes, shopRes, templatesRes, twilioRes] = await Promise.all([
     db
       .from('customers')
-      .select('id, firstName, lastName, phone, smsConsent')
+      .select('id, first_name, last_name, phone, sms_consent')
       .eq('id', id)
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .maybeSingle(),
     db
-      .from('organizations')
+      .from('shops')
       .select('name, phone')
-      .eq('clerkOrgId', orgId)
+      .eq('org_id', orgId)
       .maybeSingle(),
     db
       .from('reminder_templates')
       .select('id, name, body')
-      .eq('orgId', orgId)
-      .order('createdAt', { ascending: true }),
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: true }),
     db
       .from('twilio_configs')
-      .select('isActive')
-      .eq('orgId', orgId)
+      .select('is_active')
+      .eq('org_id', orgId)
       .maybeSingle(),
   ])
 
   assertSupabaseError(customerRes.error, 'Failed to fetch SMS customer')
-  assertSupabaseError(orgRes.error, 'Failed to fetch SMS organization')
+  assertSupabaseError(shopRes.error, 'Failed to fetch SMS organization')
   assertSupabaseError(templatesRes.error, 'Failed to fetch SMS templates')
   assertSupabaseError(twilioRes.error, 'Failed to fetch Twilio config')
 
   const customer = customerRes.data as CustomerRow | null
-  const org = orgRes.data
+  const shop = shopRes.data
   const templates = (templatesRes.data ?? []) as TemplateRow[]
 
-  if (!customer || !org) notFound()
+  if (!customer || !shop) notFound()
 
   const vehiclesRes = await db
     .from('vehicles')
-    .select('id, customerId, year, make, model')
-    .eq('customerId', customer.id)
+    .select('id, customer_id, year, make, model')
+    .eq('customer_id', customer.id)
   assertSupabaseError(vehiclesRes.error, 'Failed to fetch customer vehicles for SMS')
 
   const vehicles = (vehiclesRes.data ?? []) as VehicleRow[]
@@ -95,22 +98,22 @@ export default async function SmsPage({ params }: SmsPageProps) {
 
   if (vehicleIds.length > 0) {
     const serviceRes = await db
-      .from('service_records')
-      .select('id, vehicleId, serviceType, nextDueDate, serviceDate')
-      .in('vehicleId', vehicleIds)
-      .order('serviceDate', { ascending: false })
+      .from('repair_orders')
+      .select('id, vehicle_id, service_type, next_due_date, service_date')
+      .in('vehicle_id', vehicleIds)
+      .order('service_date', { ascending: false })
     assertSupabaseError(serviceRes.error, 'Failed to fetch vehicle service records for SMS')
     serviceRows = (serviceRes.data ?? []) as ServiceRow[]
   }
 
   const latestByVehicle = new Map<string, ServiceRow>()
   for (const record of serviceRows) {
-    if (!latestByVehicle.has(record.vehicleId)) {
-      latestByVehicle.set(record.vehicleId, record)
+    if (!latestByVehicle.has(record.vehicle_id)) {
+      latestByVehicle.set(record.vehicle_id, record)
     }
   }
 
-  const twilioActive = twilioRes.data?.isActive ?? false
+  const twilioActive = twilioRes.data?.is_active ?? false
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -123,7 +126,7 @@ export default async function SmsPage({ params }: SmsPageProps) {
         <div>
           <h1 className="text-2xl font-bold">Send SMS</h1>
           <p className="text-sm text-zinc-600">
-            {customer.firstName} {customer.lastName}
+            {customer.first_name} {customer.last_name}
           </p>
         </div>
       </div>
@@ -143,10 +146,10 @@ export default async function SmsPage({ params }: SmsPageProps) {
       <SmsComposeForm
         customer={{
           id: customer.id,
-          firstName: customer.firstName,
-          lastName: customer.lastName,
+          firstName: customer.first_name,
+          lastName: customer.last_name,
           phone: customer.phone,
-          smsConsent: customer.smsConsent,
+          smsConsent: customer.sms_consent,
         }}
         vehicles={vehicles.map((vehicle) => {
           const latestService = latestByVehicle.get(vehicle.id)
@@ -158,13 +161,13 @@ export default async function SmsPage({ params }: SmsPageProps) {
             latestService: latestService
               ? {
                   id: latestService.id,
-                  serviceType: latestService.serviceType,
-                  nextDueDate: latestService.nextDueDate,
+                  serviceType: latestService.service_type,
+                  nextDueDate: latestService.next_due_date,
                 }
               : null,
           }
         })}
-        org={{ name: org.name, phone: org.phone ?? '' }}
+        org={{ name: shop.name, phone: shop.phone ?? '' }}
         templates={templates.map((template) => ({
           id: template.id,
           name: template.name,

@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import { createProductAdminClient } from '@/lib/supabase/server'
 import type { DuplicateInfo, CleanedRow } from './types'
 
 export async function checkDuplicatePhones(
@@ -11,13 +11,18 @@ export async function checkDuplicatePhones(
 
   if (phones.length === 0) return []
 
-  const existing = await prisma.customer.findMany({
-    where: { orgId, phone: { in: phones } },
-    select: { phone: true, firstName: true, lastName: true },
-  })
+  const db = await createProductAdminClient()
+  const { data: existing } = await db
+    .from('customers')
+    .select('phone, first_name, last_name')
+    .eq('org_id', orgId)
+    .in('phone', phones)
 
   const existingSet = new Map(
-    existing.map(c => [c.phone, `${c.firstName} ${c.lastName}`])
+    (existing ?? []).map((c: { phone: string; first_name: string; last_name: string }) => [
+      c.phone,
+      `${c.first_name} ${c.last_name}`,
+    ])
   )
 
   const duplicates: DuplicateInfo[] = []
@@ -28,12 +33,7 @@ export async function checkDuplicatePhones(
     const existingName = existingSet.get(phone)
     if (existingName) {
       const name = `${row.cells.firstName?.value ?? ''} ${row.cells.lastName?.value ?? ''}`.trim()
-      duplicates.push({
-        phone,
-        rowIndex: row.rowIndex,
-        name,
-        type: 'existing',
-      })
+      duplicates.push({ phone, rowIndex: row.rowIndex, name, type: 'existing' })
     }
   }
 

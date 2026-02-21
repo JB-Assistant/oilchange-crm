@@ -1,243 +1,211 @@
-import { prisma } from "./prisma";
-import { sendSMS } from "./twilio";
+import { createProductAdminClient } from '@/lib/supabase/server'
+import { sendSMS } from './twilio'
 
 interface SendResult {
-  sent: number;
-  failed: number;
-  skipped: number;
+  sent: number
+  failed: number
+  skipped: number
 }
 
 export async function sendQueuedMessages(): Promise<SendResult> {
-  let sent = 0;
-  let failed = 0;
-  let skipped = 0;
+  let sent = 0
+  let failed = 0
+  let skipped = 0
+  const db = await createProductAdminClient()
 
   try {
-    // Get messages queued for sending (scheduled in the past)
-    const messages = await prisma.reminderMessage.findMany({
-      where: {
-        status: "queued",
-        scheduledAt: {
-          lte: new Date(),
-        },
-      },
-      take: 100, // Batch size
-      include: {
-        customer: true,
-        organization: true,
-      },
-    });
+    const { data: messages } = await db
+      .from('reminder_messages')
+      .select('id, org_id, customer_id, vehicle_id, repair_order_id, body, to_phone, shops(reminder_quiet_start, reminder_quiet_end)')
+      .eq('status', 'queued')
+      .lte('scheduled_at', new Date().toISOString())
+      .limit(100)
 
-    for (const message of messages) {
+    for (const message of (messages ?? [])) {
       try {
-        // Check quiet hours (handle wrap-around like 21-9 vs non-wrap like 9-17)
-        const hour = new Date().getHours();
-        const qStart = message.organization.reminderQuietStart;
-        const qEnd = message.organization.reminderQuietEnd;
-        const isQuietHours = qStart > qEnd
-          ? hour >= qStart || hour < qEnd
-          : hour >= qStart && hour < qEnd;
+        const shop = message.shops as { reminder_quiet_start: number; reminder_quiet_end: number } | null
+        if (shop) {
+          const hour = new Date().getHours()
+          const qStart = shop.reminder_quiet_start
+          const qEnd = shop.reminder_quiet_end
+          const isQuiet = qStart > qEnd
+            ? hour >= qStart || hour < qEnd
+            : hour >= qStart && hour < qEnd
 
-        if (isQuietHours) {
-          skipped++;
-          continue;
+          if (isQuiet) { skipped++; continue }
         }
 
-        // Send via Twilio
         await sendSMS({
-          to: message.customer.phone,
+          to: message.to_phone,
           body: message.body,
-          orgId: message.orgId,
-          customerId: message.customerId,
-          vehicleId: message.vehicleId || undefined,
-          serviceRecordId: message.serviceRecordId || undefined,
+          orgId: message.org_id,
+          customerId: message.customer_id ?? undefined,
+          vehicleId: message.vehicle_id ?? undefined,
+          repairOrderId: message.repair_order_id ?? undefined,
           reminderMessageId: message.id,
-        });
+        })
 
-        sent++;
+        sent++
       } catch (error) {
-        console.error(`Failed to send message ${message.id}:`, error);
-        
-        // Update status to failed
-        await prisma.reminderMessage.update({
-          where: { id: message.id },
-          data: {
-            status: "failed",
-            statusUpdatedAt: new Date(),
-          },
-        });
+        console.error(`Failed to send message ${message.id}:`, error)
 
-        failed++;
+        await db
+          .from('reminder_messages')
+          .update({ status: 'failed', status_updated_at: new Date().toISOString() })
+          .eq('id', message.id)
+
+        failed++
       }
     }
 
-    return { sent, failed, skipped };
+    return { sent, failed, skipped }
   } catch (error) {
-    console.error("Error in sendQueuedMessages:", error);
-    return { sent, failed, skipped };
+    console.error('Error in sendQueuedMessages:', error)
+    return { sent, failed, skipped }
   }
 }
 
 interface InboundMessage {
-  from: string;
-  to: string;
-  body: string;
-  messageSid: string;
+  from: string
+  to: string
+  body: string
+  messageSid: string
 }
 
-export async function processInboundMessage({
-  from,
-  to,
-  body,
-  messageSid,
-}: InboundMessage) {
+export async function processInboundMessage({ from, to, body, messageSid }: InboundMessage) {
+  const db = await createProductAdminClient()
+
   try {
-    // Find customer by phone
-    const customer = await prisma.customer.findFirst({
-      where: { phone: from },
-      include: { organization: true },
-    });
+    const { data: customer } = await db
+      .from('customers')
+      .select('id, first_name, last_name, phone, org_id')
+      .eq('phone', from)
+      .maybeSingle()
 
     if (!customer) {
-      console.log(`No customer found for phone: ${from}`);
-      return;
+      console.log(`No customer found for phone: ${from}`)
+      return
     }
 
-    const org = customer.organization;
-    const messageBody = body.toUpperCase().trim();
+    const { data: shop } = await db
+      .from('shops')
+      .select('name')
+      .eq('org_id', customer.org_id)
+      .maybeSingle()
 
-    // Store all inbound messages before keyword branching
-    await prisma.reminderMessage.create({
-      data: {
-        orgId: org.clerkOrgId,
-        customerId: customer.id,
-        direction: "inbound",
-        body,
-        fromPhone: from,
-        toPhone: to,
-        twilioSid: messageSid,
-        status: "delivered",
-        statusUpdatedAt: new Date(),
-        scheduledAt: new Date(),
-      },
-    });
+    const messageBody = body.toUpperCase().trim()
 
-    // Handle STOP
-    if (messageBody === "STOP" || messageBody.startsWith("STOP")) {
-      await prisma.customer.update({
-        where: { id: customer.id },
-        data: {
-          smsConsent: false,
-          smsConsentDate: new Date(),
-        },
-      });
+    await db.from('reminder_messages').insert({
+      org_id: customer.org_id,
+      customer_id: customer.id,
+      direction: 'inbound',
+      body,
+      from_phone: from,
+      to_phone: to,
+      twilio_sid: messageSid,
+      status: 'delivered',
+      status_updated_at: new Date().toISOString(),
+      scheduled_at: new Date().toISOString(),
+    })
 
-      await prisma.consentLog.create({
-        data: {
-          orgId: org.clerkOrgId,
-          customerId: customer.id,
-          action: "opt_out",
-          source: "sms_reply",
-          performedBy: "system",
-        },
-      });
+    if (messageBody === 'STOP' || messageBody.startsWith('STOP')) {
+      await db
+        .from('customers')
+        .update({ sms_consent: false, sms_consent_date: new Date().toISOString() })
+        .eq('id', customer.id)
 
-      // Send confirmation
-      await sendSMS({
-        to: from,
-        body: `You have been unsubscribed from ${org.name} reminders. Reply START to re-subscribe.`,
-        orgId: org.clerkOrgId,
-      });
-
-      return;
-    }
-
-    // Handle START
-    if (messageBody === "START") {
-      await prisma.customer.update({
-        where: { id: customer.id },
-        data: {
-          smsConsent: true,
-          smsConsentDate: new Date(),
-        },
-      });
-
-      await prisma.consentLog.create({
-        data: {
-          orgId: org.clerkOrgId,
-          customerId: customer.id,
-          action: "opt_in",
-          source: "sms_reply",
-          performedBy: "system",
-        },
-      });
+      await db.from('consent_logs').insert({
+        org_id: customer.org_id,
+        customer_id: customer.id,
+        action: 'opt_out',
+        source: 'sms_reply',
+        performed_by: 'system',
+      })
 
       await sendSMS({
         to: from,
-        body: `You are now subscribed to ${org.name} reminders. You'll receive notifications for upcoming services.`,
-        orgId: org.clerkOrgId,
-      });
-
-      return;
+        body: `You have been unsubscribed from ${shop?.name ?? 'our'} reminders. Reply START to re-subscribe.`,
+        orgId: customer.org_id,
+      })
+      return
     }
 
-    // Handle BOOK
-    if (messageBody === "BOOK") {
-      // Find the most recent outbound reminder to link the follow-up
-      const recentReminder = await prisma.reminderMessage.findFirst({
-        where: {
-          customerId: customer.id,
-          direction: "outbound",
-          serviceRecordId: { not: null },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+    if (messageBody === 'START') {
+      await db
+        .from('customers')
+        .update({ sms_consent: true, sms_consent_date: new Date().toISOString() })
+        .eq('id', customer.id)
 
-      if (recentReminder?.serviceRecordId) {
-        await prisma.followUpRecord.create({
-          data: {
-            customerId: customer.id,
-            serviceRecordId: recentReminder.serviceRecordId,
-            orgId: org.clerkOrgId,
-            method: "text",
-            outcome: "scheduled",
-            notes: "Customer replied BOOK to schedule via SMS",
-          },
-        });
+      await db.from('consent_logs').insert({
+        org_id: customer.org_id,
+        customer_id: customer.id,
+        action: 'opt_in',
+        source: 'sms_reply',
+        performed_by: 'system',
+      })
+
+      await sendSMS({
+        to: from,
+        body: `You are now subscribed to ${shop?.name ?? 'our'} reminders.`,
+        orgId: customer.org_id,
+      })
+      return
+    }
+
+    if (messageBody === 'BOOK') {
+      const { data: recentReminder } = await db
+        .from('reminder_messages')
+        .select('id, repair_order_id')
+        .eq('customer_id', customer.id)
+        .eq('direction', 'outbound')
+        .not('repair_order_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (recentReminder?.repair_order_id) {
+        await db.from('follow_up_records').insert({
+          customer_id: customer.id,
+          repair_order_id: recentReminder.repair_order_id,
+          org_id: customer.org_id,
+          method: 'text',
+          outcome: 'scheduled',
+          notes: 'Customer replied BOOK to schedule via SMS',
+          contact_date: new Date().toISOString(),
+        })
       }
 
       await sendSMS({
         to: from,
         body: `Thanks! We'll call you shortly to schedule your appointment.`,
-        orgId: org.clerkOrgId,
-      });
-
-      return;
+        orgId: customer.org_id,
+      })
+      return
     }
 
-    // Log other replies as follow-up notes
-    const recentMessage = await prisma.reminderMessage.findFirst({
-      where: {
-        customerId: customer.id,
-        direction: "outbound",
-        serviceRecordId: { not: null },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    // Log other replies
+    const { data: recentMessage } = await db
+      .from('reminder_messages')
+      .select('id, repair_order_id')
+      .eq('customer_id', customer.id)
+      .eq('direction', 'outbound')
+      .not('repair_order_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    if (recentMessage?.serviceRecordId) {
-      await prisma.followUpRecord.create({
-        data: {
-          customerId: customer.id,
-          serviceRecordId: recentMessage.serviceRecordId,
-          orgId: org.clerkOrgId,
-          method: "text",
-          outcome: "no_response",
-          notes: `Customer reply: ${body}`,
-        },
-      });
+    if (recentMessage?.repair_order_id) {
+      await db.from('follow_up_records').insert({
+        customer_id: customer.id,
+        repair_order_id: recentMessage.repair_order_id,
+        org_id: customer.org_id,
+        method: 'text',
+        outcome: 'no_response',
+        notes: `Customer reply: ${body}`,
+        contact_date: new Date().toISOString(),
+      })
     }
   } catch (error) {
-    console.error("Error processing inbound message:", error);
+    console.error('Error processing inbound message:', error)
   }
 }

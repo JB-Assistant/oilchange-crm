@@ -1,5 +1,4 @@
-import { prisma } from '@/lib/prisma'
-import { CustomerStatus, Prisma } from '@prisma/client'
+import { createProductAdminClient } from '@/lib/supabase/server'
 import { calculateNextDueDate, calculateNextDueMileage } from '@/lib/customer-status'
 import { inferServiceType } from './data-cleaners'
 
@@ -41,23 +40,21 @@ export async function processImportRow(
   const mileage = row.lastServiceMileage ? parseInt(row.lastServiceMileage) : null
   const rawDate = row.lastServiceDate ? new Date(row.lastServiceDate) : null
   const validDate = rawDate && !isNaN(rawDate.getTime()) ? rawDate : null
-  // Default to today when we have mileage or repair data but no explicit date
   const serviceDate = validDate ?? ((mileage || row.repairDescription) ? new Date() : null)
   const serviceType = row.repairDescription ? inferServiceType(row.repairDescription) : 'oil_change'
   const hasVehicle = !!(row.vehicleYear && row.vehicleMake && row.vehicleModel)
   const hasService = !!(serviceDate && mileage)
 
-  const existing = await prisma.customer.findFirst({
-    where: { orgId, phone: row.phone },
-    include: {
-      vehicles: {
-        select: {
-          id: true, year: true, make: true, model: true,
-          serviceRecords: { select: { mileageAtService: true } },
-        },
-      },
-    },
-  })
+  const db = await createProductAdminClient()
+  const now = new Date().toISOString()
+
+  // Check for existing customer by phone
+  const { data: existing } = await db
+    .from('customers')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('phone', row.phone)
+    .maybeSingle()
 
   if (existing) {
     if (!hasVehicle) {
@@ -65,36 +62,48 @@ export async function processImportRow(
     }
 
     const importYear = parseInt(row.vehicleYear)
-    const matchedVehicle = existing.vehicles.find(
-      v =>
+
+    // Check if vehicle already exists
+    const { data: existingVehicles } = await db
+      .from('vehicles')
+      .select('id, year, make, model')
+      .eq('customer_id', existing.id)
+
+    const matchedVehicle = (existingVehicles ?? []).find(
+      (v: { id: string; year: number; make: string; model: string }) =>
         v.year === importYear &&
         v.make.toLowerCase() === row.vehicleMake.toLowerCase() &&
         v.model.toLowerCase() === row.vehicleModel.toLowerCase()
     )
 
     if (matchedVehicle) {
-      // Vehicle exists — try to add service record if we have data and it's not already there
       if (hasService) {
-        const alreadyHasRecord = matchedVehicle.serviceRecords.some(
-          sr => sr.mileageAtService === mileage
+        const { data: existingOrders } = await db
+          .from('repair_orders')
+          .select('mileage_at_service')
+          .eq('vehicle_id', matchedVehicle.id)
+
+        const alreadyHasRecord = (existingOrders ?? []).some(
+          (ro: { mileage_at_service: number }) => ro.mileage_at_service === mileage
         )
+
         if (!alreadyHasRecord) {
           try {
-            await prisma.serviceRecord.create({
-              data: {
-                vehicleId: matchedVehicle.id,
-                serviceDate: serviceDate!,
-                mileageAtService: mileage!,
-                serviceType,
-                notes: row.repairDescription || null,
-                nextDueDate: calculateNextDueDate(serviceDate!),
-                nextDueMileage: calculateNextDueMileage(mileage!),
-              },
+            await db.from('repair_orders').insert({
+              vehicle_id: matchedVehicle.id,
+              service_date: serviceDate!.toISOString(),
+              mileage_at_service: mileage!,
+              service_type: serviceType,
+              notes: row.repairDescription || null,
+              next_due_date: calculateNextDueDate(serviceDate!).toISOString(),
+              next_due_mileage: calculateNextDueMileage(mileage!),
+              created_at: now,
+              updated_at: now,
             })
-            await prisma.vehicle.update({
-              where: { id: matchedVehicle.id },
-              data: { mileageAtLastService: mileage },
-            })
+            await db
+              .from('vehicles')
+              .update({ mileage_at_last_service: mileage, updated_at: now })
+              .eq('id', matchedVehicle.id)
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Unknown error'
             return { status: 'error', message: `Failed to add service record: ${msg}`, created: noCreation }
@@ -109,28 +118,37 @@ export async function processImportRow(
       return { status: 'duplicate', message: 'Vehicle already exists', created: noCreation }
     }
 
+    // Add new vehicle to existing customer
     try {
-      await prisma.vehicle.create({
-        data: {
-          customerId: existing.id,
+      const { data: newVehicle } = await db
+        .from('vehicles')
+        .insert({
+          customer_id: existing.id,
           year: importYear,
           make: row.vehicleMake,
           model: row.vehicleModel,
           vin: row.vin || null,
-          licensePlate: row.licensePlate || null,
-          mileageAtLastService: mileage || null,
-          serviceRecords: hasService ? {
-            create: [{
-              serviceDate: serviceDate!,
-              mileageAtService: mileage!,
-              serviceType,
-              notes: row.repairDescription || null,
-              nextDueDate: calculateNextDueDate(serviceDate!),
-              nextDueMileage: calculateNextDueMileage(mileage!),
-            }],
-          } : undefined,
-        },
-      })
+          license_plate: row.licensePlate || null,
+          mileage_at_last_service: mileage || null,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('id')
+        .single()
+
+      if (newVehicle && hasService) {
+        await db.from('repair_orders').insert({
+          vehicle_id: newVehicle.id,
+          service_date: serviceDate!.toISOString(),
+          mileage_at_service: mileage!,
+          service_type: serviceType,
+          notes: row.repairDescription || null,
+          next_due_date: calculateNextDueDate(serviceDate!).toISOString(),
+          next_due_mileage: calculateNextDueMileage(mileage!),
+          created_at: now,
+          updated_at: now,
+        })
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       return { status: 'error', message: `Failed to enrich: ${msg}`, created: noCreation }
@@ -143,66 +161,74 @@ export async function processImportRow(
     }
   }
 
-  const customerData: Prisma.CustomerUncheckedCreateInput = {
-    firstName: row.firstName,
-    lastName: row.lastName || '',
-    phone: row.phone,
-    email: row.email || null,
-    status: CustomerStatus.up_to_date,
-    orgId,
-    smsConsent,
-    smsConsentDate: smsConsent ? new Date() : null,
-  }
-
-  if (hasVehicle) {
-    const year = parseInt(row.vehicleYear)
-
-    customerData.vehicles = {
-      create: [{
-        year,
-        make: row.vehicleMake,
-        model: row.vehicleModel,
-        vin: row.vin || null,
-        licensePlate: row.licensePlate || null,
-        mileageAtLastService: mileage || null,
-        serviceRecords: hasService ? {
-          create: [{
-            serviceDate: serviceDate!,
-            mileageAtService: mileage!,
-            serviceType,
-            notes: row.repairDescription || null,
-            nextDueDate: calculateNextDueDate(serviceDate!),
-            nextDueMileage: calculateNextDueMileage(mileage!),
-          }],
-        } : undefined,
-      }],
-    }
-  }
-
+  // Create new customer
   try {
-    await prisma.customer.create({ data: customerData })
+    const { data: newCustomer } = await db
+      .from('customers')
+      .insert({
+        org_id: orgId,
+        first_name: row.firstName,
+        last_name: row.lastName || '',
+        phone: row.phone,
+        email: row.email || null,
+        status: 'up_to_date',
+        sms_consent: smsConsent,
+        sms_consent_date: smsConsent ? now : null,
+        tags: [],
+        created_at: now,
+        updated_at: now,
+      })
+      .select('id')
+      .single()
+
+    if (!newCustomer) throw new Error('Insert returned no data')
+
+    if (hasVehicle) {
+      const year = parseInt(row.vehicleYear)
+      const { data: newVehicle } = await db
+        .from('vehicles')
+        .insert({
+          customer_id: newCustomer.id,
+          year,
+          make: row.vehicleMake,
+          model: row.vehicleModel,
+          vin: row.vin || null,
+          license_plate: row.licensePlate || null,
+          mileage_at_last_service: mileage || null,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('id')
+        .single()
+
+      if (newVehicle && hasService) {
+        await db.from('repair_orders').insert({
+          vehicle_id: newVehicle.id,
+          service_date: serviceDate!.toISOString(),
+          mileage_at_service: mileage!,
+          service_type: serviceType,
+          notes: row.repairDescription || null,
+          next_due_date: calculateNextDueDate(serviceDate!).toISOString(),
+          next_due_mileage: calculateNextDueMileage(mileage!),
+          created_at: now,
+          updated_at: now,
+        })
+      }
+    }
+
+    if (smsConsent) {
+      await db.from('consent_logs').insert({
+        org_id: orgId,
+        customer_id: newCustomer.id,
+        action: 'opt_in',
+        source: 'csv_import',
+        performed_by: 'system',
+        notes: 'Consent granted during CSV import',
+      })
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'
     return { status: 'error', message: `Failed to save: ${msg}`, created: noCreation }
-  }
-
-  if (smsConsent) {
-    const customer = await prisma.customer.findFirst({
-      where: { orgId, phone: row.phone },
-      select: { id: true },
-    })
-    if (customer) {
-      await prisma.consentLog.create({
-        data: {
-          orgId,
-          customerId: customer.id,
-          action: 'opt_in',
-          source: 'csv_import',
-          performedBy: 'system',
-          notes: 'Consent granted during CSV import',
-        },
-      })
-    }
   }
 
   return {

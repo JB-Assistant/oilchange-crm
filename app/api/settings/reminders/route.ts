@@ -1,92 +1,73 @@
-import { auth } from "@clerk/nextjs/server"
-import { NextRequest, NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
-import { ensureOrganization } from "@/lib/ensure-org"
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient } from '@/lib/supabase/server'
+import { ensureOrganization } from '@/lib/ensure-org'
 
 export async function GET() {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    // Ensure org exists (creates + seeds defaults if webhook hasn't fired yet)
-    await ensureOrganization(orgId)
+    const orgId = await ensureOrganization(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    const org = await prisma.organization.findUnique({
-      where: { clerkOrgId: orgId },
-      select: {
-        reminderEnabled: true,
-        reminderQuietStart: true,
-        reminderQuietEnd: true,
-      }
-    })
-
-    const serviceTypes = await prisma.serviceType.findMany({
-      where: { orgId },
-    })
+    const [shopRes, serviceTypesRes] = await Promise.all([
+      db.from('shops').select('reminder_enabled, reminder_quiet_start, reminder_quiet_end').eq('org_id', orgId).maybeSingle(),
+      db.from('service_types').select('*').eq('org_id', orgId),
+    ])
 
     return NextResponse.json({
-      settings: org ? {
-        enabled: org.reminderEnabled,
-        quietStart: org.reminderQuietStart,
-        quietEnd: org.reminderQuietEnd,
+      settings: shopRes.data ? {
+        enabled: shopRes.data.reminder_enabled,
+        quietStart: shopRes.data.reminder_quiet_start,
+        quietEnd: shopRes.data.reminder_quiet_end,
       } : null,
-      serviceTypes,
+      serviceTypes: serviceTypesRes.data ?? [],
     })
   } catch (error) {
-    console.error("Error fetching reminder settings:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error('[settings/reminders] GET:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { settings, serviceTypes } = await req.json()
+    const orgId = await ensureOrganization(clerkOrgId)
+    const db = await createProductAdminClient()
+    const now = new Date().toISOString()
 
-    // Ensure org exists before updating
-    await ensureOrganization(orgId)
+    await db
+      .from('shops')
+      .update({ reminder_enabled: settings.enabled, reminder_quiet_start: settings.quietStart, reminder_quiet_end: settings.quietEnd, updated_at: now })
+      .eq('org_id', orgId)
 
-    // Update organization settings
-    await prisma.organization.update({
-      where: { clerkOrgId: orgId },
-      data: {
-        reminderEnabled: settings.enabled,
-        reminderQuietStart: settings.quietStart,
-        reminderQuietEnd: settings.quietEnd,
-      },
-    })
-
-    // Update service types
     for (const type of serviceTypes) {
-      await prisma.serviceType.upsert({
-        where: { 
-          id: type.id || 'new',
-        },
-        update: {
-          reminderLeadDays: type.reminderLeadDays,
-        },
-        create: {
-          orgId,
+      await db.from('service_types').upsert(
+        {
+          id: type.id || crypto.randomUUID(),
+          org_id: orgId,
           name: type.name,
-          displayName: type.displayName,
-          defaultMileageInterval: type.defaultMileageInterval,
-          defaultTimeIntervalDays: type.defaultTimeIntervalDays,
-          reminderLeadDays: type.reminderLeadDays,
-          isActive: true,
-          isCustom: false,
+          display_name: type.displayName,
+          default_mileage_interval: type.defaultMileageInterval,
+          default_time_interval_days: type.defaultTimeIntervalDays,
+          reminder_lead_days: type.reminderLeadDays,
+          is_active: true,
+          is_custom: false,
+          category: type.category ?? 'general',
+          sort_order: type.sortOrder ?? 0,
+          updated_at: now,
         },
-      })
+        { onConflict: 'id' }
+      )
     }
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error saving reminder settings:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error('[settings/reminders] POST:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

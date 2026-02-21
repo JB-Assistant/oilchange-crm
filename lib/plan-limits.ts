@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { createProductAdminClient } from '@/lib/supabase/server'
 import { getPlanLimits } from './stripe'
 
 interface LimitCheck {
@@ -9,13 +9,23 @@ interface LimitCheck {
 }
 
 export async function checkCustomerLimit(orgId: string): Promise<LimitCheck> {
-  const org = await prisma.organization.findUnique({
-    where: { clerkOrgId: orgId },
-  })
+  const db = await createProductAdminClient()
 
-  const tier = org?.subscriptionTier || 'starter'
+  const { data: shop } = await db
+    .from('shops')
+    .select('subscription_tier')
+    .eq('org_id', orgId)
+    .maybeSingle()
+
+  const tier = shop?.subscription_tier || 'starter'
   const limits = getPlanLimits(tier)
-  const current = await prisma.customer.count({ where: { orgId } })
+
+  const { count } = await db
+    .from('customers')
+    .select('id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
+
+  const current = count ?? 0
 
   if (current >= limits.customers) {
     return {
@@ -30,26 +40,30 @@ export async function checkCustomerLimit(orgId: string): Promise<LimitCheck> {
 }
 
 export async function checkSmsLimit(orgId: string): Promise<LimitCheck> {
-  const org = await prisma.organization.findUnique({
-    where: { clerkOrgId: orgId },
-  })
+  const db = await createProductAdminClient()
 
-  const tier = org?.subscriptionTier || 'starter'
+  const { data: shop } = await db
+    .from('shops')
+    .select('subscription_tier')
+    .eq('org_id', orgId)
+    .maybeSingle()
+
+  const tier = shop?.subscription_tier || 'starter'
   const limits = getPlanLimits(tier)
 
-  // Count SMS sent this month
   const startOfMonth = new Date()
   startOfMonth.setDate(1)
   startOfMonth.setHours(0, 0, 0, 0)
 
-  const current = await prisma.reminderMessage.count({
-    where: {
-      orgId,
-      direction: 'outbound',
-      createdAt: { gte: startOfMonth },
-      status: { in: ['sent', 'delivered', 'queued'] },
-    },
-  })
+  const { count } = await db
+    .from('reminder_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
+    .eq('direction', 'outbound')
+    .gte('created_at', startOfMonth.toISOString())
+    .in('status', ['sent', 'delivered', 'queued'])
+
+  const current = count ?? 0
 
   if (current >= limits.smsPerMonth) {
     return {

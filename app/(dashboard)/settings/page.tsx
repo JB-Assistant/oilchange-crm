@@ -9,7 +9,8 @@ import Link from 'next/link'
 import { Building2, CreditCard, Users, Bell, Shield, CheckCircle2, Sparkles, ChevronRight } from 'lucide-react'
 import { PlanFeature } from '@/components/settings/plan-feature'
 import { BillingActions } from '@/components/settings/billing-actions'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 const TIER_LIMITS = {
   starter: { customers: 200, team: 1 },
@@ -18,34 +19,36 @@ const TIER_LIMITS = {
 } as const
 
 export default async function SettingsPage() {
-  const { orgId } = await auth()
-  if (!orgId) redirect('/')
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) redirect('/')
 
-  const db = getOttoClient()
-  const [orgRes, aiConfigRes, customerCountRes] = await Promise.all([
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
+
+  const [shopRes, aiConfigRes, customerCountRes] = await Promise.all([
     db
-      .from('organizations')
-      .select('*')
-      .eq('clerkOrgId', orgId)
+      .from('shops')
+      .select('subscription_tier, subscription_status, stripe_customer_id, ai_personalization')
+      .eq('org_id', orgId)
       .maybeSingle(),
     db
       .from('ai_configs')
       .select('*')
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .maybeSingle(),
     db
       .from('customers')
       .select('id', { count: 'exact', head: true })
-      .eq('orgId', orgId),
+      .eq('org_id', orgId),
   ])
 
-  assertSupabaseError(orgRes.error, 'Failed to fetch organization settings')
+  assertSupabaseError(shopRes.error, 'Failed to fetch organization settings')
   assertSupabaseError(aiConfigRes.error, 'Failed to fetch AI settings')
   assertSupabaseError(customerCountRes.error, 'Failed to count customers')
 
-  const org = orgRes.data
+  const shop = shopRes.data
   const aiConfig = aiConfigRes.data
-  const currentTier = (org?.subscriptionTier || 'starter') as keyof typeof TIER_LIMITS
+  const currentTier = (shop?.subscription_tier || 'starter') as keyof typeof TIER_LIMITS
   const limits = TIER_LIMITS[currentTier]
   const customerCount = customerCountRes.count ?? 0
 
@@ -61,11 +64,11 @@ export default async function SettingsPage() {
           <CardTitle className="flex items-center gap-2"><Building2 className="w-5 h-5" />Organization</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div><p className="text-sm text-zinc-600">Organization ID</p><p className="font-mono text-sm">{orgId}</p></div>
+          <div><p className="text-sm text-zinc-600">Organization ID</p><p className="font-mono text-sm">{clerkOrgId}</p></div>
           <Separator />
           <div>
             <p className="text-sm text-zinc-600">Status</p>
-            <Badge variant={org?.subscriptionStatus === 'active' ? 'default' : 'secondary'}>{org?.subscriptionStatus || 'trial'}</Badge>
+            <Badge variant={shop?.subscription_status === 'active' ? 'default' : 'secondary'}>{shop?.subscription_status || 'trial'}</Badge>
           </div>
         </CardContent>
       </Card>
@@ -80,7 +83,7 @@ export default async function SettingsPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <p className="font-semibold capitalize">{currentTier} Plan</p>
-                <p className="text-sm text-zinc-600">{org?.subscriptionStatus === 'trial' ? 'Free trial' : 'Active subscription'}</p>
+                <p className="text-sm text-zinc-600">{shop?.subscription_status === 'trial' ? 'Free trial' : 'Active subscription'}</p>
               </div>
               <Badge variant="outline" className="capitalize">{currentTier}</Badge>
             </div>
@@ -100,7 +103,7 @@ export default async function SettingsPage() {
             <PlanFeature name="Otto Pro" price="$99/mo" features={['Unlimited customers', '1,000 SMS/month', 'AI personalized messages', 'Advanced analytics', 'Priority support']} current={currentTier === 'pro'} />
             <PlanFeature name="Otto Business" price="$199/mo" features={['Unlimited customers', '3,000 SMS/month', 'White-label & API access', 'Dedicated support + phone']} current={currentTier === 'business'} />
           </div>
-          <BillingActions currentTier={currentTier} hasStripeCustomer={!!org?.stripeCustomerId} />
+          <BillingActions currentTier={currentTier} hasStripeCustomer={!!shop?.stripe_customer_id} />
         </CardContent>
       </Card>
 
@@ -130,7 +133,7 @@ export default async function SettingsPage() {
               <div className="flex items-center gap-2 text-sm text-zinc-600">
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
                 <span className="capitalize">{aiConfig.provider}</span> connected
-                {org?.aiPersonalization && <Badge variant="secondary" className="bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">Personalization on</Badge>}
+                {shop?.ai_personalization && <Badge variant="secondary" className="bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">Personalization on</Badge>}
               </div>
             ) : (
               <p className="text-sm text-zinc-600">No AI provider configured yet. Set up your AI assistant to get started.</p>

@@ -111,6 +111,28 @@ export async function createPlatformAdminClient() {
 // ─────────────────────────────────────────
 
 /**
+ * Resolve the Supabase UUID org_id from a Clerk org ID string.
+ * Call this at the top of every Server Component and API route
+ * that needs to query product data (otto schema).
+ *
+ * Requires: public.orgs.clerk_org_id column (Phase 0 migration).
+ *
+ * Usage:
+ *   const { orgId: clerkOrgId } = await auth()
+ *   const orgId = await resolveOrgId(clerkOrgId)  // UUID
+ */
+export async function resolveOrgId(clerkOrgId: string): Promise<string> {
+  const platform = await createPlatformAdminClient()
+  const { data, error } = await platform
+    .from('orgs')
+    .select('id')
+    .eq('clerk_org_id', clerkOrgId)
+    .single()
+  if (error || !data) throw new Error(`Org not provisioned for Clerk org: ${clerkOrgId}`)
+  return data.id
+}
+
+/**
  * Resolve the active org_id for the current user.
  * Call this at the top of Server Components / API routes
  * before any product data queries.

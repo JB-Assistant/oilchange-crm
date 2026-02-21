@@ -1,86 +1,59 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { encrypt, decrypt, isEncrypted } from "@/lib/crypto";
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
+import { encrypt, decrypt, isEncrypted } from '@/lib/crypto'
 
-// GET /api/twilio-config - Get Twilio config for org
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const config = await prisma.twilioConfig.findUnique({
-      where: { orgId },
-    });
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    if (!config) {
-      return NextResponse.json(null);
-    }
+    const { data: config } = await db
+      .from('twilio_configs')
+      .select('id, account_sid, phone_number, is_active')
+      .eq('org_id', orgId)
+      .maybeSingle()
 
-    // Decrypt accountSid for display, don't return auth token
-    const displaySid = isEncrypted(config.accountSid)
-      ? decrypt(config.accountSid)
-      : config.accountSid;
+    if (!config) return NextResponse.json(null)
 
-    return NextResponse.json({
-      id: config.id,
-      accountSid: displaySid,
-      phoneNumber: config.phoneNumber,
-      isActive: config.isActive,
-    });
+    const displaySid = isEncrypted(config.account_sid) ? decrypt(config.account_sid) : config.account_sid
+    return NextResponse.json({ id: config.id, accountSid: displaySid, phoneNumber: config.phone_number, isActive: config.is_active })
   } catch (error) {
-    console.error("Error fetching Twilio config:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[twilio-config] GET:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-// POST /api/twilio-config - Save Twilio config
 export async function POST(req: NextRequest) {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { accountSid, authToken, phoneNumber } = await req.json();
-
+    const { accountSid, authToken, phoneNumber } = await req.json()
     if (!accountSid || !authToken || !phoneNumber) {
-      return NextResponse.json(
-        { error: "Account SID, Auth Token, and Phone Number are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Account SID, Auth Token, and Phone Number are required' }, { status: 400 })
     }
 
-    const encryptedSid = encrypt(accountSid);
-    const encryptedToken = encrypt(authToken);
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
+    const now = new Date().toISOString()
 
-    const config = await prisma.twilioConfig.upsert({
-      where: { orgId },
-      update: {
-        accountSid: encryptedSid,
-        authToken: encryptedToken,
-        phoneNumber,
-        isActive: true,
-      },
-      create: {
-        orgId,
-        accountSid: encryptedSid,
-        authToken: encryptedToken,
-        phoneNumber,
-        isActive: true,
-      },
-    });
+    const { data, error } = await db
+      .from('twilio_configs')
+      .upsert(
+        { org_id: orgId, account_sid: encrypt(accountSid), auth_token: encrypt(authToken), phone_number: phoneNumber, is_active: true, updated_at: now },
+        { onConflict: 'org_id' }
+      )
+      .select('id, phone_number, is_active')
+      .single()
 
-    return NextResponse.json({
-      id: config.id,
-      accountSid: config.accountSid,
-      phoneNumber: config.phoneNumber,
-      isActive: config.isActive,
-    });
+    if (error) throw error
+    return NextResponse.json({ id: data.id, phoneNumber: data.phone_number, isActive: data.is_active })
   } catch (error) {
-    console.error("Error saving Twilio config:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[twilio-config] POST:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

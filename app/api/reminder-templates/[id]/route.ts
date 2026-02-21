@@ -1,51 +1,59 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { auth } from '@clerk/nextjs/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
-// PATCH /api/reminder-templates/[id] - Update template
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { id } = await params;
-    const body = await req.json();
-    const template = await prisma.reminderTemplate.update({
-      where: { id, orgId },
-      data: body,
-    });
+    const { id } = await params
+    const body = await req.json()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    return NextResponse.json(template);
+    const { data, error } = await db
+      .from('reminder_templates')
+      .update(body)
+      .eq('id', id)
+      .eq('org_id', orgId)
+      .select('*')
+      .maybeSingle()
+
+    if (error) throw error
+    if (!data) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+    return NextResponse.json(data)
   } catch (error) {
-    console.error("Error updating template:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[reminder-templates/[id]] PATCH:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-// DELETE /api/reminder-templates/[id] - Delete template
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, orgId } = await auth();
-    if (!userId || !orgId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { userId, orgId: clerkOrgId } = await auth()
+    if (!userId || !clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { id } = await params;
-    await prisma.reminderTemplate.delete({
-      where: { id, orgId },
-    });
+    const { id } = await params
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
 
-    return NextResponse.json({ success: true });
+    const { error } = await db
+      .from('reminder_templates')
+      .delete()
+      .eq('id', id)
+      .eq('org_id', orgId)
+
+    if (error) throw error
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error deleting template:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error('[reminder-templates/[id]] DELETE:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

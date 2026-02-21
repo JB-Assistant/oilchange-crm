@@ -2,75 +2,77 @@ export const dynamic = 'force-dynamic'
 
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 interface ReminderMessageRow {
   id: string
-  customerId: string | null
+  customer_id: string | null
   body: string
   status: string
-  scheduledAt: string
-  sentAt: string | null
+  scheduled_at: string
+  sent_at: string | null
 }
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
 }
 
 export default async function RemindersPage() {
-  const { userId, orgId } = await auth()
+  const { userId, orgId: clerkOrgId } = await auth()
 
-  if (!userId || !orgId) {
+  if (!userId || !clerkOrgId) {
     redirect('/sign-in')
   }
 
-  const db = getOttoClient()
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
   const now = new Date()
   const inSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
 
-  const [upcomingRes, todayRes, orgRes] = await Promise.all([
+  const [upcomingRes, todayRes, shopRes] = await Promise.all([
     db
       .from('reminder_messages')
-      .select('id, customerId, body, status, scheduledAt, sentAt')
-      .eq('orgId', orgId)
+      .select('id, customer_id, body, status, scheduled_at, sent_at')
+      .eq('org_id', orgId)
       .eq('status', 'queued')
-      .gte('scheduledAt', now.toISOString())
-      .lte('scheduledAt', inSevenDays.toISOString())
-      .order('scheduledAt', { ascending: true })
+      .gte('scheduled_at', now.toISOString())
+      .lte('scheduled_at', inSevenDays.toISOString())
+      .order('scheduled_at', { ascending: true })
       .limit(50),
     db
       .from('reminder_messages')
-      .select('id, customerId, body, status, scheduledAt, sentAt')
-      .eq('orgId', orgId)
-      .gte('sentAt', startOfToday().toISOString())
-      .lt('sentAt', startOfTomorrow().toISOString()),
+      .select('id, customer_id, body, status, scheduled_at, sent_at')
+      .eq('org_id', orgId)
+      .gte('sent_at', startOfToday().toISOString())
+      .lt('sent_at', startOfTomorrow().toISOString()),
     db
-      .from('organizations')
-      .select('*')
-      .eq('clerkOrgId', orgId)
+      .from('shops')
+      .select('reminder_enabled')
+      .eq('org_id', orgId)
       .maybeSingle(),
   ])
 
   assertSupabaseError(upcomingRes.error, 'Failed to fetch upcoming reminders')
   assertSupabaseError(todayRes.error, 'Failed to fetch today reminders')
-  assertSupabaseError(orgRes.error, 'Failed to fetch organization reminder settings')
+  assertSupabaseError(shopRes.error, 'Failed to fetch organization reminder settings')
 
   const upcomingMessages = (upcomingRes.data ?? []) as ReminderMessageRow[]
   const todayMessages = (todayRes.data ?? []) as ReminderMessageRow[]
-  const org = orgRes.data
+  const shop = shopRes.data
 
   const customerIds = Array.from(new Set(
-    upcomingMessages.map((message) => message.customerId).filter((id): id is string => Boolean(id))
+    upcomingMessages.map((message) => message.customer_id).filter((id): id is string => Boolean(id))
   ))
 
   let customerById = new Map<string, CustomerRow>()
   if (customerIds.length > 0) {
     const customersRes = await db
       .from('customers')
-      .select('id, firstName, lastName, phone')
+      .select('id, first_name, last_name, phone')
       .in('id', customerIds)
 
     assertSupabaseError(customersRes.error, 'Failed to fetch reminder customers')
@@ -100,7 +102,7 @@ export default async function RemindersPage() {
         </div>
       </div>
 
-      {!org?.reminderEnabled && (
+      {!shop?.reminder_enabled && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
           <p className="text-amber-800">
             <strong>Reminders are disabled.</strong>{' '}
@@ -142,12 +144,12 @@ export default async function RemindersPage() {
         ) : (
           <div className="divide-y">
             {upcomingMessages.map((message) => {
-              const customer = message.customerId ? customerById.get(message.customerId) : undefined
+              const customer = message.customer_id ? customerById.get(message.customer_id) : undefined
               return (
                 <div key={message.id} className="p-4 flex items-center justify-between">
                   <div>
                     <p className="font-medium">
-                      {customer?.firstName} {customer?.lastName}
+                      {customer?.first_name} {customer?.last_name}
                     </p>
                     <p className="text-sm text-gray-500">
                       {customer?.phone}
@@ -161,7 +163,7 @@ export default async function RemindersPage() {
                       Queued
                     </span>
                     <p className="text-sm text-gray-500 mt-1">
-                      {new Date(message.scheduledAt).toLocaleString()}
+                      {new Date(message.scheduled_at).toLocaleString()}
                     </p>
                   </div>
                 </div>

@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 import { sendSMS } from '@/lib/twilio'
 import { renderTemplate } from '@/lib/template-engine'
 
@@ -12,8 +12,8 @@ interface BulkSmsBody {
 }
 
 export async function POST(request: NextRequest) {
-  const { orgId } = await auth()
-  if (!orgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
     const { customerIds, message, useTemplate, templateBody }: BulkSmsBody = await request.json()
@@ -21,44 +21,64 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'customerIds must be a non-empty array (max 100)' }, { status: 400 })
     }
 
-    const [customers, twilioConfig, org] = await Promise.all([
-      prisma.customer.findMany({
-        where: { id: { in: customerIds }, orgId, smsConsent: true },
-        select: { id: true, phone: true, firstName: true },
-      }),
-      prisma.twilioConfig.findUnique({ where: { orgId } }),
-      prisma.organization.findUnique({ where: { clerkOrgId: orgId }, select: { name: true, phone: true } }),
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
+    const now = new Date().toISOString()
+
+    const [{ data: customers }, { data: twilioConfig }, { data: shop }] = await Promise.all([
+      db.from('customers')
+        .select('id, phone, first_name')
+        .in('id', customerIds)
+        .eq('org_id', orgId)
+        .eq('sms_consent', true),
+      db.from('twilio_configs')
+        .select('is_active')
+        .eq('org_id', orgId)
+        .maybeSingle(),
+      db.from('shops')
+        .select('name, phone')
+        .eq('org_id', orgId)
+        .maybeSingle(),
     ])
-    if (!twilioConfig || !twilioConfig.isActive) {
+
+    if (!twilioConfig?.is_active) {
       return NextResponse.json({ error: 'Twilio not configured for this organization' }, { status: 400 })
     }
 
     let sent = 0
     let failed = 0
-    const skipped = customerIds.length - customers.length
+    const skipped = customerIds.length - (customers?.length ?? 0)
 
-    for (const customer of customers) {
+    for (const customer of (customers ?? [])) {
       const renderedBody = useTemplate && templateBody
         ? renderTemplate(templateBody, {
-            firstName: customer.firstName, shopName: org?.name ?? '', shopPhone: org?.phone ?? '',
+            firstName: customer.first_name, shopName: shop?.name ?? '', shopPhone: shop?.phone ?? '',
           })
         : message
-      const record = await prisma.reminderMessage.create({
-        data: {
-          orgId, customerId: customer.id, scheduledAt: new Date(),
-          direction: 'outbound', body: renderedBody, status: 'queued',
-        },
-      })
+
+      const { data: record } = await db
+        .from('reminder_messages')
+        .insert({
+          org_id: orgId,
+          customer_id: customer.id,
+          scheduled_at: now,
+          direction: 'outbound',
+          body: renderedBody,
+          status: 'queued',
+        })
+        .select('id')
+        .single()
+
       try {
         await sendSMS({
           to: customer.phone, body: renderedBody, orgId,
-          customerId: customer.id, reminderMessageId: record.id,
+          customerId: customer.id, reminderMessageId: record?.id,
         })
         sent++
       } catch {
-        await prisma.reminderMessage.update({
-          where: { id: record.id }, data: { status: 'failed' },
-        })
+        if (record?.id) {
+          await db.from('reminder_messages').update({ status: 'failed' }).eq('id', record.id)
+        }
         failed++
       }
     }

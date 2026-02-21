@@ -7,7 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Calendar, Clock, User, Car } from 'lucide-react'
 import { CreateAppointmentDialog } from '@/components/appointments/create-appointment-dialog'
 import { AppointmentStatus, type AppointmentStatus as AppointmentStatusValue } from '@/lib/db/enums'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline'
 const STATUS_CFG: Record<AppointmentStatusValue, { label: string; variant: BadgeVariant; className?: string }> = {
@@ -21,20 +22,20 @@ const STATUS_CFG: Record<AppointmentStatusValue, { label: string; variant: Badge
 
 interface AppointmentRow {
   id: string
-  customerId: string
-  vehicleId: string | null
-  locationId: string | null
-  scheduledAt: string
+  customer_id: string
+  vehicle_id: string | null
+  location_id: string | null
+  scheduled_at: string
   duration: number
   status: AppointmentStatusValue
   notes: string | null
-  serviceTypeNames: string[] | null
+  service_type_names: string[] | null
 }
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
 }
 
@@ -61,17 +62,18 @@ const fmtDate = (d: Date) => d.toLocaleDateString('en-US', { weekday: 'short', m
 export default async function AppointmentsPage(
   { searchParams }: { searchParams: Promise<{ status?: string; date?: string }> }
 ) {
-  const { orgId } = await auth()
-  if (!orgId) redirect('/')
+  const { orgId: clerkOrgId } = await auth()
+  if (!clerkOrgId) redirect('/')
 
   const params = await searchParams
-  const db = getOttoClient()
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
 
   let appointmentsQuery = db
     .from('appointments')
-    .select('id, customerId, vehicleId, locationId, scheduledAt, duration, status, notes, serviceTypeNames')
-    .eq('orgId', orgId)
-    .order('scheduledAt', { ascending: true })
+    .select('id, customer_id, vehicle_id, location_id, scheduled_at, duration, status, notes, service_type_names')
+    .eq('org_id', orgId)
+    .order('scheduled_at', { ascending: true })
 
   if (isAppointmentStatus(params.status)) {
     appointmentsQuery = appointmentsQuery.eq('status', params.status)
@@ -82,8 +84,8 @@ export default async function AppointmentsPage(
     if (!Number.isNaN(start.getTime())) {
       const end = new Date(`${params.date}T23:59:59.999`)
       appointmentsQuery = appointmentsQuery
-        .gte('scheduledAt', start.toISOString())
-        .lte('scheduledAt', end.toISOString())
+        .gte('scheduled_at', start.toISOString())
+        .lte('scheduled_at', end.toISOString())
     }
   }
 
@@ -91,13 +93,13 @@ export default async function AppointmentsPage(
   assertSupabaseError(appointmentsError, 'Failed to fetch appointments')
   const appointments = (appointmentRows ?? []) as AppointmentRow[]
 
-  const customerIds = Array.from(new Set(appointments.map((appt) => appt.customerId)))
-  const vehicleIds = Array.from(new Set(appointments.map((appt) => appt.vehicleId).filter((id): id is string => Boolean(id))))
-  const locationIds = Array.from(new Set(appointments.map((appt) => appt.locationId).filter((id): id is string => Boolean(id))))
+  const customerIds = Array.from(new Set(appointments.map((appt) => appt.customer_id)))
+  const vehicleIds = Array.from(new Set(appointments.map((appt) => appt.vehicle_id).filter((id): id is string => Boolean(id))))
+  const locationIds = Array.from(new Set(appointments.map((appt) => appt.location_id).filter((id): id is string => Boolean(id))))
 
   const [customersRes, vehiclesRes, locationsRes] = await Promise.all([
     customerIds.length > 0
-      ? db.from('customers').select('id, firstName, lastName, phone').in('id', customerIds)
+      ? db.from('customers').select('id, first_name, last_name, phone').in('id', customerIds)
       : Promise.resolve({ data: [], error: null }),
     vehicleIds.length > 0
       ? db.from('vehicles').select('id, year, make, model').in('id', vehicleIds)
@@ -116,15 +118,15 @@ export default async function AppointmentsPage(
   const locationById = new Map(((locationsRes.data ?? []) as LocationRow[]).map((location) => [location.id, location]))
 
   const hydratedAppointments = appointments.flatMap((appt) => {
-    const customer = customerById.get(appt.customerId)
+    const customer = customerById.get(appt.customer_id)
     if (!customer) return []
     return [{
       ...appt,
-      scheduledAt: new Date(appt.scheduledAt),
+      scheduledAt: new Date(appt.scheduled_at),
       customer,
-      vehicle: appt.vehicleId ? vehicleById.get(appt.vehicleId) ?? null : null,
-      location: appt.locationId ? locationById.get(appt.locationId) ?? null : null,
-      serviceTypeNames: appt.serviceTypeNames ?? [],
+      vehicle: appt.vehicle_id ? vehicleById.get(appt.vehicle_id) ?? null : null,
+      location: appt.location_id ? locationById.get(appt.location_id) ?? null : null,
+      serviceTypeNames: appt.service_type_names ?? [],
     }]
   })
 
@@ -155,7 +157,7 @@ export default async function AppointmentsPage(
                 <div className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <User className="h-4 w-4 text-muted-foreground" />
-                    {appt.customer.firstName} {appt.customer.lastName}
+                    {appt.customer.first_name} {appt.customer.last_name}
                   </CardTitle>
                   <p className="text-sm text-muted-foreground flex items-center gap-2">
                     <Clock className="h-3.5 w-3.5" />

@@ -2,28 +2,29 @@ import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { type CustomerStatus, CustomerStatus as CustomerStatusValues } from '@/lib/db/enums'
 import { createCustomerSchema, updateCustomerSchema } from '@/lib/validations'
-import { assertSupabaseError, buildSearchPattern, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError, buildSearchPattern } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 import { ZodError } from 'zod'
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
   status: string
-  createdAt: string
+  created_at: string
 }
 
 interface VehicleRow {
   id: string
-  customerId: string
+  customer_id: string
 }
 
 interface ServiceRow {
-  vehicleId: string
-  nextDueDate: string
-  nextDueMileage: number
-  serviceDate: string
+  vehicle_id: string
+  next_due_date: string
+  next_due_mileage: number
+  service_date: string
 }
 
 function isCustomerStatus(value: string | null): value is CustomerStatus {
@@ -33,12 +34,11 @@ function isCustomerStatus(value: string | null): value is CustomerStatus {
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const { searchParams } = new URL(request.url)
     const statusParam = searchParams.get('status')
     const search = searchParams.get('search')
@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
     let query = db
       .from('customers')
       .select('*', { count: 'exact' })
-      .eq('orgId', orgId)
-      .order('createdAt', { ascending: false })
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
 
     if (isCustomerStatus(statusParam)) {
       query = query.eq('status', statusParam)
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     if (search) {
       const pattern = buildSearchPattern(search)
       query = query.or(
-        `firstName.ilike.${pattern},lastName.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`
+        `first_name.ilike.${pattern},last_name.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`
       )
     }
 
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
     assertSupabaseError(customersError, 'Failed to fetch customers')
 
     const customers = (customerRows ?? []) as CustomerRow[]
-    const customerIds = customers.map((customer) => customer.id)
+    const customerIds = customers.map(c => c.id)
 
     let vehicles: VehicleRow[] = []
     let serviceRecords: ServiceRow[] = []
@@ -76,18 +76,18 @@ export async function GET(request: NextRequest) {
     if (customerIds.length > 0) {
       const vehiclesRes = await db
         .from('vehicles')
-        .select('id, customerId')
-        .in('customerId', customerIds)
+        .select('id, customer_id')
+        .in('customer_id', customerIds)
       assertSupabaseError(vehiclesRes.error, 'Failed to fetch customer vehicles')
       vehicles = (vehiclesRes.data ?? []) as VehicleRow[]
 
-      const vehicleIds = vehicles.map((vehicle) => vehicle.id)
+      const vehicleIds = vehicles.map(v => v.id)
       if (vehicleIds.length > 0) {
         const servicesRes = await db
-          .from('service_records')
-          .select('vehicleId, nextDueDate, nextDueMileage, serviceDate')
-          .in('vehicleId', vehicleIds)
-          .order('serviceDate', { ascending: false })
+          .from('repair_orders')
+          .select('vehicle_id, next_due_date, next_due_mileage, service_date')
+          .in('vehicle_id', vehicleIds)
+          .order('service_date', { ascending: false })
         assertSupabaseError(servicesRes.error, 'Failed to fetch service records')
         serviceRecords = (servicesRes.data ?? []) as ServiceRow[]
       }
@@ -95,34 +95,30 @@ export async function GET(request: NextRequest) {
 
     const latestServiceByVehicle = new Map<string, ServiceRow>()
     for (const record of serviceRecords) {
-      if (!latestServiceByVehicle.has(record.vehicleId)) {
-        latestServiceByVehicle.set(record.vehicleId, record)
+      if (!latestServiceByVehicle.has(record.vehicle_id)) {
+        latestServiceByVehicle.set(record.vehicle_id, record)
       }
     }
 
     const vehiclesByCustomer = new Map<string, Array<VehicleRow & {
-      serviceRecords: Array<{ nextDueDate: string; nextDueMileage: number }>
+      serviceRecords: Array<{ next_due_date: string; next_due_mileage: number }>
     }>>()
 
     for (const vehicle of vehicles) {
       const latestService = latestServiceByVehicle.get(vehicle.id)
       const hydratedVehicle = {
         ...vehicle,
-        serviceRecords: latestService ? [{
-          nextDueDate: latestService.nextDueDate,
-          nextDueMileage: latestService.nextDueMileage,
-        }] : [],
+        serviceRecords: latestService ? [{ next_due_date: latestService.next_due_date, next_due_mileage: latestService.next_due_mileage }] : [],
       }
-
-      const existing = vehiclesByCustomer.get(vehicle.customerId)
+      const existing = vehiclesByCustomer.get(vehicle.customer_id)
       if (existing) {
         existing.push(hydratedVehicle)
       } else {
-        vehiclesByCustomer.set(vehicle.customerId, [hydratedVehicle])
+        vehiclesByCustomer.set(vehicle.customer_id, [hydratedVehicle])
       }
     }
 
-    const hydratedCustomers = customers.map((customer) => ({
+    const hydratedCustomers = customers.map(customer => ({
       ...customer,
       vehicles: vehiclesByCustomer.get(customer.id) ?? [],
     }))
@@ -130,35 +126,31 @@ export async function GET(request: NextRequest) {
     const total = count ?? 0
     return NextResponse.json({ data: hydratedCustomers, total, page, totalPages: Math.ceil(total / limit) })
   } catch (error) {
-    console.error('Error fetching customers:', error)
+    console.error('[customers] GET:', error)
     return NextResponse.json({ error: 'Failed to fetch customers' }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const body = await request.json()
     const data = createCustomerSchema.parse(body)
 
     const duplicateRes = await db
       .from('customers')
       .select('id')
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .eq('phone', data.phone)
       .maybeSingle()
     assertSupabaseError(duplicateRes.error, 'Failed to check duplicate customer phone')
 
     if (duplicateRes.data) {
-      return NextResponse.json(
-        { error: 'A customer with this phone number already exists' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'A customer with this phone number already exists' }, { status: 400 })
     }
 
     const now = new Date().toISOString()
@@ -167,78 +159,72 @@ export async function POST(request: NextRequest) {
       .from('customers')
       .insert({
         id: customerId,
-        firstName: data.firstName,
-        lastName: data.lastName,
+        first_name: data.firstName,
+        last_name: data.lastName,
         phone: data.phone,
         email: data.email || null,
         status: CustomerStatusValues.up_to_date,
-        orgId,
+        org_id: orgId,
         tags: [],
-        createdAt: now,
-        updatedAt: now,
+        created_at: now,
+        updated_at: now,
       })
       .select('*')
       .single()
-
     assertSupabaseError(customerInsertRes.error, 'Failed to create customer')
     const customer = customerInsertRes.data
 
     let vehicles: unknown[] = []
     if (data.vehicles.length > 0) {
-      const vehicleRows = data.vehicles.map((vehicle) => ({
+      const vehicleRows = data.vehicles.map(vehicle => ({
         id: crypto.randomUUID(),
-        customerId,
+        customer_id: customerId,
         year: vehicle.year,
         make: vehicle.make,
         model: vehicle.model,
-        licensePlate: vehicle.licensePlate || null,
+        license_plate: vehicle.licensePlate || null,
         vin: null,
-        mileageAtLastService: null,
-        createdAt: now,
-        updatedAt: now,
+        mileage_at_last_service: null,
+        created_at: now,
+        updated_at: now,
       }))
-
-      const vehiclesInsertRes = await db
-        .from('vehicles')
-        .insert(vehicleRows)
-        .select('*')
+      const vehiclesInsertRes = await db.from('vehicles').insert(vehicleRows).select('*')
       assertSupabaseError(vehiclesInsertRes.error, 'Failed to create customer vehicles')
       vehicles = vehiclesInsertRes.data ?? []
     }
 
     return NextResponse.json({ ...customer, vehicles }, { status: 201 })
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
-    }
-    console.error('Error creating customer:', error)
+    if (error instanceof ZodError) return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    console.error('[customers] POST:', error)
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 })
   }
 }
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const body = await request.json()
-    const { id, ...data } = updateCustomerSchema.parse(body)
+    const { id, firstName, lastName, phone, email, smsConsent, preferredContactTime } = updateCustomerSchema.parse(body)
 
-    const updatePayload = {
-      ...data,
-      updatedAt: new Date().toISOString(),
-    }
+    const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (firstName !== undefined) updatePayload.first_name = firstName
+    if (lastName !== undefined) updatePayload.last_name = lastName
+    if (phone !== undefined) updatePayload.phone = phone
+    if (email !== undefined) updatePayload.email = email
+    if (smsConsent !== undefined) updatePayload.sms_consent = smsConsent
+    if (preferredContactTime !== undefined) updatePayload.preferred_contact_time = preferredContactTime
 
     const { data: updatedRows, error } = await db
       .from('customers')
       .update(updatePayload)
       .eq('id', id)
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .select('id')
-
     assertSupabaseError(error, 'Failed to update customer')
 
     if (!updatedRows || updatedRows.length === 0) {
@@ -247,39 +233,30 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
-    }
-    console.error('Error updating customer:', error)
+    if (error instanceof ZodError) return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    console.error('[customers] PATCH:', error)
     return NextResponse.json({ error: 'Failed to update customer' }, { status: 500 })
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
-    if (!id) {
-      return NextResponse.json({ error: 'Customer ID required' }, { status: 400 })
-    }
+    if (!id) return NextResponse.json({ error: 'Customer ID required' }, { status: 400 })
 
-    const { error } = await db
-      .from('customers')
-      .delete()
-      .eq('id', id)
-      .eq('orgId', orgId)
+    const { error } = await db.from('customers').delete().eq('id', id).eq('org_id', orgId)
     assertSupabaseError(error, 'Failed to delete customer')
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error deleting customer:', error)
+    console.error('[customers] DELETE:', error)
     return NextResponse.json({ error: 'Failed to delete customer' }, { status: 500 })
   }
 }

@@ -1,24 +1,25 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { createFollowUpSchema } from '@/lib/validations'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 import { ZodError } from 'zod'
 
 interface FollowUpRow {
   id: string
-  customerId: string
-  serviceRecordId: string
+  customer_id: string
+  repair_order_id: string
 }
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
 }
 
-interface ServiceRecordRow {
+interface RepairOrderRow {
   id: string
-  vehicleId: string
+  vehicle_id: string
 }
 
 interface VehicleRow {
@@ -30,12 +31,11 @@ interface VehicleRow {
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const { searchParams } = new URL(request.url)
     const customerId = searchParams.get('customerId')
     const limit = Math.max(1, parseInt(searchParams.get('limit') || '50', 10))
@@ -43,73 +43,66 @@ export async function GET(request: NextRequest) {
     let query = db
       .from('follow_up_records')
       .select('*')
-      .eq('orgId', orgId)
-      .order('contactDate', { ascending: false })
+      .eq('org_id', orgId)
+      .order('contact_date', { ascending: false })
       .limit(limit)
 
-    if (customerId) {
-      query = query.eq('customerId', customerId)
-    }
+    if (customerId) query = query.eq('customer_id', customerId)
 
     const recordsRes = await query
     assertSupabaseError(recordsRes.error, 'Failed to fetch follow-up records')
     const records = (recordsRes.data ?? []) as FollowUpRow[]
 
-    const customerIds = Array.from(new Set(records.map((record) => record.customerId)))
-    const serviceRecordIds = Array.from(new Set(records.map((record) => record.serviceRecordId)))
+    const customerIds = Array.from(new Set(records.map(r => r.customer_id)))
+    const repairOrderIds = Array.from(new Set(records.map(r => r.repair_order_id).filter(Boolean)))
 
-    const [customersRes, serviceRecordsRes] = await Promise.all([
+    const [customersRes, repairOrdersRes] = await Promise.all([
       customerIds.length > 0
-        ? db.from('customers').select('id, firstName, lastName').in('id', customerIds)
+        ? db.from('customers').select('id, first_name, last_name').in('id', customerIds)
         : Promise.resolve({ data: [], error: null }),
-      serviceRecordIds.length > 0
-        ? db.from('service_records').select('id, vehicleId').in('id', serviceRecordIds)
+      repairOrderIds.length > 0
+        ? db.from('repair_orders').select('id, vehicle_id').in('id', repairOrderIds)
         : Promise.resolve({ data: [], error: null }),
     ])
 
     assertSupabaseError(customersRes.error, 'Failed to fetch follow-up customers')
-    assertSupabaseError(serviceRecordsRes.error, 'Failed to fetch follow-up service records')
+    assertSupabaseError(repairOrdersRes.error, 'Failed to fetch follow-up repair orders')
 
-    const serviceRows = (serviceRecordsRes.data ?? []) as ServiceRecordRow[]
-    const vehicleIds = Array.from(new Set(serviceRows.map((service) => service.vehicleId)))
+    const repairOrderRows = (repairOrdersRes.data ?? []) as RepairOrderRow[]
+    const vehicleIds = Array.from(new Set(repairOrderRows.map(ro => ro.vehicle_id)))
     const vehiclesRes = vehicleIds.length > 0
       ? await db.from('vehicles').select('id, year, make, model').in('id', vehicleIds)
       : { data: [], error: null }
-
     assertSupabaseError(vehiclesRes.error, 'Failed to fetch follow-up vehicles')
 
-    const customerById = new Map(((customersRes.data ?? []) as CustomerRow[]).map((customer) => [customer.id, customer]))
-    const serviceById = new Map(serviceRows.map((service) => [service.id, service]))
-    const vehicleById = new Map(((vehiclesRes.data ?? []) as VehicleRow[]).map((vehicle) => [vehicle.id, vehicle]))
+    const customerById = new Map(((customersRes.data ?? []) as CustomerRow[]).map(c => [c.id, c]))
+    const repairOrderById = new Map(repairOrderRows.map(ro => [ro.id, ro]))
+    const vehicleById = new Map(((vehiclesRes.data ?? []) as VehicleRow[]).map(v => [v.id, v]))
 
-    const hydratedRecords = records.map((record) => {
-      const serviceRecord = serviceById.get(record.serviceRecordId)
-      const vehicle = serviceRecord ? vehicleById.get(serviceRecord.vehicleId) : null
+    const hydratedRecords = records.map(record => {
+      const repairOrder = repairOrderById.get(record.repair_order_id)
+      const vehicle = repairOrder ? vehicleById.get(repairOrder.vehicle_id) : null
       return {
         ...record,
-        customer: customerById.get(record.customerId) ?? null,
-        serviceRecord: serviceRecord ? {
-          ...serviceRecord,
-          vehicle: vehicle ?? null,
-        } : null,
+        customer: customerById.get(record.customer_id) ?? null,
+        serviceRecord: repairOrder ? { ...repairOrder, vehicle: vehicle ?? null } : null,
       }
     })
 
     return NextResponse.json(hydratedRecords)
   } catch (error) {
-    console.error('Error fetching follow-up records:', error)
+    console.error('[follow-ups] GET:', error)
     return NextResponse.json({ error: 'Failed to fetch follow-up records' }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const body = await request.json()
     const data = createFollowUpSchema.parse(body)
     const { customerId, serviceRecordId, method, outcome, notes, staffMember } = data
@@ -118,101 +111,86 @@ export async function POST(request: NextRequest) {
       .from('customers')
       .select('id')
       .eq('id', customerId)
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .maybeSingle()
     assertSupabaseError(customerRes.error, 'Failed to verify follow-up customer')
 
-    if (!customerRes.data) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-    }
+    if (!customerRes.data) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
-    const serviceRes = await db
-      .from('service_records')
-      .select('id, vehicleId')
+    const repairOrderRes = await db
+      .from('repair_orders')
+      .select('id, vehicle_id')
       .eq('id', serviceRecordId)
       .maybeSingle()
-    assertSupabaseError(serviceRes.error, 'Failed to verify follow-up service record')
+    assertSupabaseError(repairOrderRes.error, 'Failed to verify follow-up repair order')
 
-    if (!serviceRes.data) {
-      return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
-    }
+    if (!repairOrderRes.data) return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
 
     const vehicleRes = await db
       .from('vehicles')
       .select('id')
-      .eq('id', serviceRes.data.vehicleId as string)
-      .eq('customerId', customerId)
+      .eq('id', repairOrderRes.data.vehicle_id as string)
+      .eq('customer_id', customerId)
       .maybeSingle()
     assertSupabaseError(vehicleRes.error, 'Failed to verify follow-up service ownership')
 
-    if (!vehicleRes.data) {
-      return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
-    }
+    if (!vehicleRes.data) return NextResponse.json({ error: 'Service record not found' }, { status: 404 })
 
+    const now = new Date().toISOString()
     const recordRes = await db
       .from('follow_up_records')
       .insert({
         id: crypto.randomUUID(),
-        customerId,
-        serviceRecordId,
-        orgId,
-        contactDate: new Date().toISOString(),
+        customer_id: customerId,
+        repair_order_id: serviceRecordId,
+        org_id: orgId,
+        contact_date: now,
         method,
         outcome,
         notes: notes ?? null,
-        staffMember: staffMember ?? null,
-        createdAt: new Date().toISOString(),
+        staff_member: staffMember ?? null,
+        created_at: now,
       })
       .select('*')
       .single()
-
     assertSupabaseError(recordRes.error, 'Failed to create follow-up record')
+
     return NextResponse.json(recordRes.data, { status: 201 })
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
-    }
-    console.error('Error creating follow-up record:', error)
+    if (error instanceof ZodError) return NextResponse.json({ error: error.issues[0].message }, { status: 400 })
+    console.error('[follow-ups] POST:', error)
     return NextResponse.json({ error: 'Failed to create follow-up record' }, { status: 500 })
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const db = getOttoClient()
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
-    if (!id) {
-      return NextResponse.json({ error: 'Follow-up record ID required' }, { status: 400 })
-    }
+    if (!id) return NextResponse.json({ error: 'Follow-up record ID required' }, { status: 400 })
 
     const recordRes = await db
       .from('follow_up_records')
       .select('id')
       .eq('id', id)
-      .eq('orgId', orgId)
+      .eq('org_id', orgId)
       .maybeSingle()
     assertSupabaseError(recordRes.error, 'Failed to verify follow-up record')
 
-    if (!recordRes.data) {
-      return NextResponse.json({ error: 'Follow-up record not found' }, { status: 404 })
-    }
+    if (!recordRes.data) return NextResponse.json({ error: 'Follow-up record not found' }, { status: 404 })
 
-    const deleteRes = await db
-      .from('follow_up_records')
-      .delete()
-      .eq('id', id)
+    const deleteRes = await db.from('follow_up_records').delete().eq('id', id)
     assertSupabaseError(deleteRes.error, 'Failed to delete follow-up record')
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error deleting follow-up record:', error)
+    console.error('[follow-ups] DELETE:', error)
     return NextResponse.json({ error: 'Failed to delete follow-up record' }, { status: 500 })
   }
 }

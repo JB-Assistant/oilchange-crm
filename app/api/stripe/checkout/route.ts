@@ -1,42 +1,36 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { createProductAdminClient, createPlatformAdminClient, resolveOrgId } from '@/lib/supabase/server'
 import { stripe, PLANS, PlanTier } from '@/lib/stripe'
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await auth()
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { orgId: clerkOrgId } = await auth()
+    if (!clerkOrgId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { tier } = await request.json() as { tier: string }
     const plan = PLANS[tier as PlanTier]
+    if (!plan || !plan.priceId) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
 
-    if (!plan || !plan.priceId) {
-      return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
-    }
+    const orgId = await resolveOrgId(clerkOrgId)
+    const db = await createProductAdminClient()
+    const platform = await createPlatformAdminClient()
 
-    const org = await prisma.organization.findUnique({
-      where: { clerkOrgId: orgId },
-    })
+    const [shopRes, orgRes] = await Promise.all([
+      db.from('shops').select('stripe_customer_id').eq('org_id', orgId).maybeSingle(),
+      platform.from('orgs').select('name').eq('id', orgId).maybeSingle(),
+    ])
 
-    if (!org) {
-      return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
-    }
+    if (!shopRes.data) return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
 
-    // Create or retrieve Stripe customer
-    let stripeCustomerId = org.stripeCustomerId
+    let stripeCustomerId = shopRes.data.stripe_customer_id
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
-        metadata: { orgId, clerkOrgId: orgId },
-        name: org.name,
+        metadata: { orgId, clerkOrgId },
+        name: orgRes.data?.name ?? '',
       })
       stripeCustomerId = customer.id
-      await prisma.organization.update({
-        where: { clerkOrgId: orgId },
-        data: { stripeCustomerId },
-      })
+      await db.from('shops').update({ stripe_customer_id: stripeCustomerId, updated_at: new Date().toISOString() }).eq('org_id', orgId)
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -50,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: session.url })
   } catch (error) {
-    console.error('Error creating checkout session:', error)
+    console.error('[stripe/checkout]:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

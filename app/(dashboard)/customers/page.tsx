@@ -10,7 +10,8 @@ import { CustomerFilters } from '@/components/customers/customer-filters'
 import { CustomerListItem } from '@/components/customers/customer-list-item'
 import { CustomerEmptyState } from '@/components/customers/customer-empty-state'
 import { type CustomerStatus, CustomerStatus as CustomerStatusValues } from '@/lib/db/enums'
-import { assertSupabaseError, buildSearchPattern, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError, buildSearchPattern } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 
 const PAGE_SIZE = 25
 
@@ -20,23 +21,23 @@ interface CustomersPageProps {
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
   status: string
-  createdAt: string
+  created_at: string
 }
 
 interface VehicleRow {
   id: string
-  customerId: string
+  customer_id: string
 }
 
 interface ServiceRow {
-  vehicleId: string
-  nextDueDate: string
-  nextDueMileage: number
-  serviceDate: string
+  vehicle_id: string
+  next_due_date: string
+  next_due_mileage: number
+  service_date: string
 }
 
 function isCustomerStatus(value: string | undefined): value is CustomerStatus {
@@ -45,19 +46,20 @@ function isCustomerStatus(value: string | undefined): value is CustomerStatus {
 }
 
 export default async function CustomersPage({ searchParams }: CustomersPageProps) {
-  const { orgId } = await auth()
+  const { orgId: clerkOrgId } = await auth()
   const params = await searchParams
-  if (!orgId) redirect('/')
+  if (!clerkOrgId) redirect('/')
 
-  const db = getOttoClient()
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
   const page = Math.max(1, parseInt(params.page || '1', 10))
 
   let customersQuery = db
     .from('customers')
     .select('*', { count: 'exact' })
-    .eq('orgId', orgId)
+    .eq('org_id', orgId)
     .order('status', { ascending: true })
-    .order('createdAt', { ascending: false })
+    .order('created_at', { ascending: false })
 
   if (isCustomerStatus(params.status)) {
     customersQuery = customersQuery.eq('status', params.status)
@@ -66,7 +68,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   if (params.search) {
     const pattern = buildSearchPattern(params.search)
     customersQuery = customersQuery.or(
-      `firstName.ilike.${pattern},lastName.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`
+      `first_name.ilike.${pattern},last_name.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`
     )
   }
 
@@ -84,18 +86,18 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   if (customerIds.length > 0) {
     const { data: vehicleRows, error: vehicleError } = await db
       .from('vehicles')
-      .select('id, customerId')
-      .in('customerId', customerIds)
+      .select('id, customer_id')
+      .in('customer_id', customerIds)
     assertSupabaseError(vehicleError, 'Failed to fetch customer vehicles')
     vehicles = (vehicleRows ?? []) as VehicleRow[]
 
     const vehicleIds = vehicles.map((vehicle) => vehicle.id)
     if (vehicleIds.length > 0) {
       const { data: serviceRows, error: serviceError } = await db
-        .from('service_records')
-        .select('vehicleId, nextDueDate, nextDueMileage, serviceDate')
-        .in('vehicleId', vehicleIds)
-        .order('serviceDate', { ascending: false })
+        .from('repair_orders')
+        .select('vehicle_id, next_due_date, next_due_mileage, service_date')
+        .in('vehicle_id', vehicleIds)
+        .order('service_date', { ascending: false })
       assertSupabaseError(serviceError, 'Failed to fetch service records')
       serviceRecords = (serviceRows ?? []) as ServiceRow[]
     }
@@ -103,8 +105,8 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
 
   const latestServiceByVehicle = new Map<string, ServiceRow>()
   for (const record of serviceRecords) {
-    if (!latestServiceByVehicle.has(record.vehicleId)) {
-      latestServiceByVehicle.set(record.vehicleId, record)
+    if (!latestServiceByVehicle.has(record.vehicle_id)) {
+      latestServiceByVehicle.set(record.vehicle_id, record)
     }
   }
 
@@ -113,23 +115,23 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
     const latestService = latestServiceByVehicle.get(vehicle.id)
     const normalizedVehicle = {
       serviceRecords: latestService ? [{
-        nextDueDate: new Date(latestService.nextDueDate),
-        nextDueMileage: latestService.nextDueMileage,
+        nextDueDate: new Date(latestService.next_due_date),
+        nextDueMileage: latestService.next_due_mileage,
       }] : [],
     }
 
-    const existing = vehiclesByCustomer.get(vehicle.customerId)
+    const existing = vehiclesByCustomer.get(vehicle.customer_id)
     if (existing) {
       existing.push(normalizedVehicle)
     } else {
-      vehiclesByCustomer.set(vehicle.customerId, [normalizedVehicle])
+      vehiclesByCustomer.set(vehicle.customer_id, [normalizedVehicle])
     }
   }
 
   const hydratedCustomers = customers.map((customer) => ({
     id: customer.id,
-    firstName: customer.firstName,
-    lastName: customer.lastName,
+    firstName: customer.first_name,
+    lastName: customer.last_name,
     phone: customer.phone,
     status: customer.status,
     vehicles: vehiclesByCustomer.get(customer.id) ?? [],

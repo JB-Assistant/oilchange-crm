@@ -15,7 +15,8 @@ import { CustomerNotes } from '@/components/customers/customer-notes'
 import { CustomerTags } from '@/components/customers/customer-tags'
 import { ActivityTimeline } from '@/components/customers/activity-timeline'
 import { MessageHistory } from '@/components/customers/message-history'
-import { assertSupabaseError, getOttoClient } from '@/lib/supabase/otto'
+import { assertSupabaseError } from '@/lib/supabase/otto'
+import { createProductAdminClient, resolveOrgId } from '@/lib/supabase/server'
 import { type CustomerStatus } from '@/lib/db/enums'
 
 interface CustomerDetailPageProps {
@@ -24,57 +25,59 @@ interface CustomerDetailPageProps {
 
 interface CustomerRow {
   id: string
-  firstName: string
-  lastName: string
+  first_name: string
+  last_name: string
   phone: string
   email: string | null
   status: string
   tags: string[]
-  createdAt: string
+  created_at: string
 }
 
 interface VehicleRow {
   id: string
-  customerId: string
+  customer_id: string
   year: number
   make: string
   model: string
-  licensePlate: string | null
+  license_plate: string | null
 }
 
 interface ServiceRecordRow {
   id: string
-  vehicleId: string
-  serviceType: string
-  serviceDate: string
-  mileageAtService: number
-  nextDueDate: string
-  nextDueMileage: number
+  vehicle_id: string
+  service_type: string
+  service_date: string
+  mileage_at_service: number
+  next_due_date: string
+  next_due_mileage: number
   notes: string | null
 }
 
 interface FollowUpRow {
   id: string
-  customerId: string
-  serviceRecordId: string
-  contactDate: string
+  customer_id: string
+  repair_order_id: string
+  contact_date: string
   method: string
   outcome: string
   notes: string | null
-  staffMember: string | null
+  staff_member: string | null
 }
 
 export default async function CustomerDetailPage({ params }: CustomerDetailPageProps) {
-  const { orgId } = await auth()
+  const { orgId: clerkOrgId } = await auth()
   const { id } = await params
-  if (!orgId) redirect('/')
+  if (!clerkOrgId) redirect('/')
 
-  const db = getOttoClient()
+  const orgId = await resolveOrgId(clerkOrgId)
+  const db = await createProductAdminClient()
+
   const { data: customerRow, error: customerError } = await db
     .from('customers')
-    .select('id, firstName, lastName, phone, email, status, tags, createdAt')
+    .select('id, first_name, last_name, phone, email, status, tags, created_at')
     .eq('id', id)
-    .eq('orgId', orgId)
+    .eq('org_id', orgId)
     .maybeSingle()
 
   assertSupabaseError(customerError, 'Failed to fetch customer')
@@ -84,14 +87,14 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
   const [vehiclesRes, followUpsRes] = await Promise.all([
     db
       .from('vehicles')
-      .select('id, customerId, year, make, model, licensePlate')
-      .eq('customerId', customer.id),
+      .select('id, customer_id, year, make, model, license_plate')
+      .eq('customer_id', customer.id),
     db
       .from('follow_up_records')
-      .select('id, customerId, serviceRecordId, contactDate, method, outcome, notes, staffMember')
-      .eq('customerId', customer.id)
-      .eq('orgId', orgId)
-      .order('contactDate', { ascending: false })
+      .select('id, customer_id, repair_order_id, contact_date, method, outcome, notes, staff_member')
+      .eq('customer_id', customer.id)
+      .eq('org_id', orgId)
+      .order('contact_date', { ascending: false })
       .limit(10),
   ])
 
@@ -106,21 +109,21 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
 
   if (vehicleIds.length > 0) {
     const { data, error } = await db
-      .from('service_records')
-      .select('id, vehicleId, serviceType, serviceDate, mileageAtService, nextDueDate, nextDueMileage, notes')
-      .in('vehicleId', vehicleIds)
-      .order('serviceDate', { ascending: false })
+      .from('repair_orders')
+      .select('id, vehicle_id, service_type, service_date, mileage_at_service, next_due_date, next_due_mileage, notes')
+      .in('vehicle_id', vehicleIds)
+      .order('service_date', { ascending: false })
     assertSupabaseError(error, 'Failed to fetch service records')
     serviceRecords = (data ?? []) as ServiceRecordRow[]
   }
 
   const serviceRecordsByVehicle = new Map<string, ServiceRecordRow[]>()
   for (const record of serviceRecords) {
-    const existing = serviceRecordsByVehicle.get(record.vehicleId)
+    const existing = serviceRecordsByVehicle.get(record.vehicle_id)
     if (existing) {
       existing.push(record)
     } else {
-      serviceRecordsByVehicle.set(record.vehicleId, [record])
+      serviceRecordsByVehicle.set(record.vehicle_id, [record])
     }
   }
 
@@ -132,29 +135,29 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
-    licensePlate: vehicle.licensePlate,
+    licensePlate: vehicle.license_plate,
     serviceRecords: (serviceRecordsByVehicle.get(vehicle.id) ?? []).map((record) => ({
       id: record.id,
-      serviceType: record.serviceType,
-      serviceDate: new Date(record.serviceDate),
-      mileageAtService: record.mileageAtService,
-      nextDueDate: new Date(record.nextDueDate),
-      nextDueMileage: record.nextDueMileage,
+      serviceType: record.service_type,
+      serviceDate: new Date(record.service_date),
+      mileageAtService: record.mileage_at_service,
+      nextDueDate: new Date(record.next_due_date),
+      nextDueMileage: record.next_due_mileage,
       notes: record.notes,
     })),
   }))
 
   const hydratedFollowUps = followUps.map((followUp) => {
-    const serviceRecord = serviceRecordById.get(followUp.serviceRecordId)
-    const vehicle = serviceRecord ? vehicleById.get(serviceRecord.vehicleId) : null
+    const serviceRecord = serviceRecordById.get(followUp.repair_order_id)
+    const vehicle = serviceRecord ? vehicleById.get(serviceRecord.vehicle_id) : null
 
     return {
       id: followUp.id,
       outcome: followUp.outcome,
       method: followUp.method,
-      contactDate: new Date(followUp.contactDate),
+      contactDate: new Date(followUp.contact_date),
       notes: followUp.notes,
-      staffMember: followUp.staffMember,
+      staffMember: followUp.staff_member,
       serviceRecord: serviceRecord && vehicle ? {
         vehicle: { year: vehicle.year, make: vehicle.make },
       } : null,
@@ -165,15 +168,15 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
     <div className="space-y-6">
       <CustomerHeader
         id={customer.id}
-        firstName={customer.firstName}
-        lastName={customer.lastName}
+        firstName={customer.first_name}
+        lastName={customer.last_name}
         phone={customer.phone}
         email={customer.email}
         status={customer.status as CustomerStatus}
         vehicleCount={hydratedVehicles.length}
       />
 
-      <ContactInfo phone={customer.phone} email={customer.email} createdAt={new Date(customer.createdAt)} />
+      <ContactInfo phone={customer.phone} email={customer.email} createdAt={new Date(customer.created_at)} />
 
       <CustomerTags customerId={customer.id} initialTags={customer.tags ?? []} />
 
