@@ -16,14 +16,27 @@ export async function sendQueuedMessages(): Promise<SendResult> {
   try {
     const { data: messages } = await db
       .from('reminder_messages')
-      .select('id, org_id, customer_id, vehicle_id, repair_order_id, body, to_phone, shops(reminder_quiet_start, reminder_quiet_end)')
+      .select('id, org_id, customer_id, vehicle_id, repair_order_id, body, to_phone')
       .eq('status', 'queued')
       .lte('scheduled_at', new Date().toISOString())
       .limit(100)
 
-    for (const message of (messages ?? [])) {
+    if (!messages || messages.length === 0) return { sent, failed, skipped }
+
+    // Pre-fetch quiet hours for all orgs in this batch (avoids broken FK join)
+    const orgIds = [...new Set(messages.map((m) => m.org_id))]
+    const { data: shops } = await db
+      .from('shops')
+      .select('org_id, reminder_quiet_start, reminder_quiet_end')
+      .in('org_id', orgIds)
+
+    const shopByOrg = new Map(
+      (shops ?? []).map((s) => [s.org_id, s])
+    )
+
+    for (const message of messages) {
       try {
-        const shop = message.shops as { reminder_quiet_start: number; reminder_quiet_end: number } | null
+        const shop = shopByOrg.get(message.org_id)
         if (shop) {
           const hour = new Date().getHours()
           const qStart = shop.reminder_quiet_start

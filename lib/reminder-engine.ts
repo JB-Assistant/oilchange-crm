@@ -123,7 +123,11 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
         if (!latestOrder) continue
 
         for (const rule of rules) {
-          const serviceType = rule.service_types as { name: string; display_name: string } | null
+          const serviceTypeRaw = rule.service_types as
+            | { name: string; display_name: string }
+            | Array<{ name: string; display_name: string }>
+            | null
+          const serviceType = Array.isArray(serviceTypeRaw) ? serviceTypeRaw[0] ?? null : serviceTypeRaw
           if (!serviceType) continue
 
           if (
@@ -165,8 +169,12 @@ export async function evaluateReminders(org: OrgInput): Promise<EvaluationResult
 
           let body: string
           let wasAIGenerated = false
-          const templateBody = (rule.reminder_templates as { body: string } | null)?.body
-            ?? getFallbackTemplate(rule.sequence_number)
+          const templateRowRaw = rule.reminder_templates as
+            | { body: string }
+            | Array<{ body: string }>
+            | null
+          const templateRow = Array.isArray(templateRowRaw) ? templateRowRaw[0] ?? null : templateRowRaw
+          const templateBody = templateRow?.body ?? getFallbackTemplate(rule.sequence_number)
 
           if (useAI) {
             const aiResult = await generateAIMessage({
