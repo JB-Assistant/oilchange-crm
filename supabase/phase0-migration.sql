@@ -14,6 +14,9 @@
 -- 0a. Add clerk_org_id to public.orgs
 -- ─────────────────────────────────────────────────────────────
 ALTER TABLE public.orgs ADD COLUMN IF NOT EXISTS clerk_org_id TEXT UNIQUE;
+CREATE UNIQUE INDEX IF NOT EXISTS orgs_clerk_org_id_uidx
+  ON public.orgs (clerk_org_id)
+  WHERE clerk_org_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────
 -- 0b. Add shop-level columns to otto.shops
@@ -29,6 +32,29 @@ ALTER TABLE otto.shops ADD COLUMN IF NOT EXISTS subscription_tier     TEXT    DE
 ALTER TABLE otto.shops ADD COLUMN IF NOT EXISTS stripe_customer_id    TEXT;
 ALTER TABLE otto.shops ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
 ALTER TABLE otto.shops ADD COLUMN IF NOT EXISTS phone                 TEXT;
+
+-- Ensure upsert(onConflict: 'org_id') works; skip if legacy duplicates exist.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'otto'
+      AND tablename = 'shops'
+      AND indexname = 'shops_org_id_uidx'
+  ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM otto.shops
+      GROUP BY org_id
+      HAVING COUNT(*) > 1
+    ) THEN
+      RAISE NOTICE 'Skipped creating otto.shops(org_id) unique index because duplicate org_id rows exist.';
+    ELSE
+      CREATE UNIQUE INDEX shops_org_id_uidx ON otto.shops(org_id);
+    END IF;
+  END IF;
+END $$;
 
 -- ─────────────────────────────────────────────────────────────
 -- 0c. Rename repair_orders columns to match new snake_case schema

@@ -90,6 +90,18 @@ npm run db:migrate
 npm run db:seed
 ```
 
+### Supabase Schema Setup (Current App Path)
+
+If you are using Supabase for the current multi-schema app, run SQL scripts in this order:
+
+1. `supabase/baseline-setup.sql` (new/empty projects only)
+2. `supabase/phase0-migration.sql` (required upgrade/compatibility patch)
+
+Then verify with:
+
+- `GET /api/health/schema` (returns 200 only when required schema pieces are present)
+- Detailed runbook: `supabase/MIGRATIONS.md`
+
 ### 4. Clerk Configuration
 
 1. Create a Clerk application at [clerk.dev](https://clerk.dev)
